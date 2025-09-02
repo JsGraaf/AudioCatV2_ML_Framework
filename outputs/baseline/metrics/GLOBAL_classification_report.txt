@@ -1,0 +1,10 @@
+Best threshold (target-f1): 0.5000
+
+              precision    recall  f1-score   support
+
+      target       0.08      0.99      0.14       179
+       other       0.99      0.05      0.10      2221
+
+    accuracy                           0.12      2400
+   macro avg       0.53      0.52      0.12      2400
+weighted avg       0.92      0.12      0.10      2400
