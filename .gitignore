@@ -1,0 +1,5 @@
+BirdNET-Analyzer
+cache
+datasets
+__pycache__/*
+*/__pycache__/*
