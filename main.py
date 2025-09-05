@@ -62,7 +62,7 @@ if __name__ == "__main__":
 
     # Train the model
     scores = []
-    for fold in datasets[:3]:
+    for fold in datasets:
 
         logging.info(f"Running fold: {fold['fold_id']}")
         model = build_binary_cnn(

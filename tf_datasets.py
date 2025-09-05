@@ -1,10 +1,11 @@
-import math
+import logging
 import random
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+from sklearn.model_selection import train_test_split
 
 from audio_processing import audio_pipeline
 
@@ -200,8 +201,124 @@ def build_file_lists(
                 "fold_id": fold_id,
                 "train_ds": train_ds,
                 "test_ds": test_ds,
-                "train_size": len(pos_tr_all),
-                "test_size": len(pos_test_all),
+                "train_size": (1 + config["data"]["pos_neg_ratio"]) * len(pos_tr_all),
+                "test_size": (1 + config["data"]["pos_neg_ratio"]) * len(pos_test_all),
             }
         )
+        print(
+            f"Pos: {len(pos_tr_all)}, Neg: {len(neg_tr_all)}, Size: {out[-1]['train_size']}"
+        )
     return out
+
+
+def build_final_dataset(df: pd.DataFrame, config: Dict):
+    """
+    Create the final dataset, this contains all the training samples and
+    x times negative samples. A 80-10-10 train, val, test split will be made
+    """
+
+    # Build file lists for all files
+    all_pos = (
+        df[df["primary_label"] == config["exp"]["target"]]
+        .apply(lambda x: (x["path"], x["start"], x["end"]), axis=1)
+        .tolist()
+    )
+
+    all_neg = (
+        df[df["primary_label"] != config["exp"]["target"]]
+        .apply(lambda x: (x["path"], x["start"], x["end"]), axis=1)
+        .tolist()
+    )
+
+    all_pos = [(x, 1) for x in all_pos]
+    all_neg = [(x, 0) for x in all_neg]
+
+    all_data = all_pos + all_neg
+
+    all_idx = [x[0] for x in all_data]
+    all_labels = [x[1] for x in all_data]
+
+    # Split into train and test
+    X_train, X_test, y_train, y_test = train_test_split(
+        all_idx,
+        all_labels,
+        test_size=0.1,
+        random_state=config["exp"]["random_state"],
+        stratify=all_labels,
+    )
+
+    # Split train further into train and validation
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_train,
+        y_train,
+        test_size=0.1,
+        random_state=config["exp"]["random_state"],
+        stratify=y_train,
+    )
+
+    # Recreate the tuples
+    X_train = list(zip(X_train, y_train))
+    X_val = list(zip(X_val, y_val))
+    X_test = list(zip(X_test, y_test))
+
+    pos_train = len([x for x in X_train if x[1] == 1])
+    pos_val = len([x for x in X_train if x[1] == 1])
+    pos_test = len([x for x in X_train if x[1] == 1])
+
+    logging.info("Final training set")
+    logging.info(
+        f"Train: {len(X_train)}, Pos: {pos_train}, Neg: {len([x for x in X_train if x[1] == 0])}"
+    )
+    logging.info(
+        f"Validation: {len(X_val)}, Pos: {pos_val}, Neg: {len([x for x in X_val if x[1] == 0])}"
+    )
+    logging.info(
+        f"Testing: {len(X_test)}, Pos {pos_test}, Neg: {len([x for x in X_test if x[1] == 0])}"
+    )
+
+    train_ds = make_epoch_train_dataset(
+        [x[0] for x in X_train if x[1] == 1],
+        [x[0] for x in X_train if x[1] == 0],
+        config=config,
+        seed=config["exp"]["random_state"],
+    )
+    val_ds = make_fixed_test_dataset(
+        [x[0] for x in X_val if x[1] == 1],
+        [x[0] for x in X_val if x[1] == 0],
+        config=config,
+        seed=config["exp"]["random_state"],
+    )
+    test_ds = make_fixed_test_dataset(
+        [x[0] for x in X_test if x[1] == 1],
+        [x[0] for x in X_test if x[1] == 0],
+        config=config,
+        seed=config["exp"]["random_state"],
+    )
+
+    return {
+        "train_ds": train_ds,
+        "val_ds": val_ds,
+        "test_ds": test_ds,
+        "train_size": (1 + config["data"]["pos_neg_ratio"]) * pos_train,
+        "val_size": (1 + config["data"]["pos_neg_ratio"]) * pos_val,
+        "test_size": (1 + config["data"]["pos_neg_ratio"]) * pos_test,
+    }
+
+
+def make_soundscape_dataset(df: pd.DataFrame, config: Dict):
+
+    all_pos = (
+        (df[df["primary_label"] == config["exp"]["target"]])
+        .apply(lambda x: (x["path"], x["start"], x["end"]), axis=1)
+        .tolist()
+    )
+
+    all_neg = (
+        (df[df["primary_label"] != config["exp"]["target"]])
+        .apply(lambda x: (x["path"], x["start"], x["end"]), axis=1)
+        .tolist()
+    )
+
+    soundscape_ds = build_val_dataset(all_pos, all_neg, config)
+
+    return soundscape_ds
