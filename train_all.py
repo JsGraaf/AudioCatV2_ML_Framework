@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 
 from cross_validation import make_cv_splits
 from init import init
@@ -62,20 +63,19 @@ if __name__ == "__main__":
             1,
         )
     )
-    from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 
     early = EarlyStopping(
-        monitor="val_loss",
-        mode="min",
+        monitor="val_pr_auc",
+        mode="max",
         patience=8,
         min_delta=1e-3,
         restore_best_weights=True,
         verbose=1,
     )
     ckpt = ModelCheckpoint(
-        "output/best.keras",
-        monitor="val_loss",
-        mode="min",
+        "output/best_train_all.keras",
+        monitor="val_pr_auc",
+        mode="max",
         save_best_only=True,
         verbose=1,
     )
@@ -95,6 +95,8 @@ if __name__ == "__main__":
 
     results = model.evaluate(datasets["test_ds"], verbose=1, return_dict=True)
 
-    pd.DataFrame(results).to_csv("Full_Training_Results.csv", index=False)
+    model.save("output/full_training_model.keras")
 
     print(results)
+
+    pd.DataFrame(results, index=[0]).to_csv("Full_Training_Results.csv", index=False)

@@ -1,14 +1,14 @@
 import logging
 import os
 
-import librosa
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 
 from cross_validation import make_cv_splits
 from init import init
 from load_birdclef import load_and_clean_birdclef
+from metric_utils import get_scores_per_class, plot_pr_with_thresholds
 from misc import load_config
 from models.binary_cnn import build_binary_cnn
 from tf_datasets import build_file_lists
@@ -62,7 +62,8 @@ if __name__ == "__main__":
 
     # Train the model
     scores = []
-    for fold in datasets:
+    prediction_df = pd.DataFrame()
+    for i, fold in enumerate(datasets):
 
         logging.info(f"Running fold: {fold['fold_id']}")
         model = build_binary_cnn(
@@ -70,7 +71,26 @@ if __name__ == "__main__":
                 config["data"]["audio"]["n_mels"],
                 config["data"]["audio"]["n_frames"],
                 1,
-            )
+            ),
+            alpha=0.3,
+            gamma=2,
+        )
+
+        # Callbacks
+        early = EarlyStopping(
+            monitor="pr_auc",
+            mode="max",
+            patience=8,
+            min_delta=1e-3,
+            restore_best_weights=True,
+            verbose=1,
+        )
+        ckpt = ModelCheckpoint(
+            "output/best_cv_train.keras",
+            monitor="pr_auc",
+            mode="max",
+            save_best_only=True,
+            verbose=1,
         )
 
         model.fit(
@@ -80,14 +100,30 @@ if __name__ == "__main__":
                 np.ceil(fold["train_size"] / config["ml"]["batch_size"])
             ),
             verbose=1,
+            callbacks=[early, ckpt],
         )
-
+        #
         results = model.evaluate(fold["test_ds"], verbose=1, return_dict=True)
         results["id"] = fold["fold_id"]
 
+        predictions = model.predict(fold["test_ds"], verbose=1).ravel()
+
+        fold["test_df"]["predictions"] = predictions
+
+        prediction_df = pd.concat([prediction_df, fold["test_df"]])
+
         scores.append(results)
 
-    print(scores)
+    prediction_df["true_label"] = prediction_df["primary_label"].apply(
+        lambda x: 1 if x == config["exp"]["target"] else 0
+    )
+    print(get_scores_per_class(prediction_df))
+
+    plot_pr_with_thresholds(
+        prediction_df["true_label"],
+        prediction_df["predictions"],
+        marks=(0.01, 1.0),
+    )
 
     # Write results to a csv
     pd.DataFrame(scores).to_csv("Training_Results.csv", index=False)

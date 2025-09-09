@@ -43,10 +43,10 @@ def build_train_dataset(
     labels_neg = tf.zeros([len(neg_files)], dtype=tf.float32)
 
     def _map_pos(filename, start, end, label):
-        return audio_pipeline((filename, start, end), config, augment=True), label
+        return audio_pipeline((filename, start, end), config), label
 
     def _map_neg(filename, start, end, label):
-        return audio_pipeline((filename, start, end), config, augment=True), label
+        return audio_pipeline((filename, start, end), config), label
 
     ds_pos = tf.data.Dataset.from_tensor_slices(
         (
@@ -93,7 +93,7 @@ def build_val_dataset(
             labels_pos,
         )
     ).map(
-        lambda f, s, e, y: (audio_pipeline((f, s, e), config, augment=False), y),
+        lambda f, s, e, y: (audio_pipeline((f, s, e), config), y),
         num_parallel_calls=tf.data.AUTOTUNE,
     )
 
@@ -105,7 +105,10 @@ def build_val_dataset(
             labels_neg,
         )
     ).map(
-        lambda f, s, e, y: (audio_pipeline((f, s, e), config, augment=False), y),
+        lambda f, s, e, y: (
+            audio_pipeline((f, s, e), config),
+            y,
+        ),
         num_parallel_calls=tf.data.AUTOTUNE,
     )
 
@@ -130,14 +133,14 @@ def make_fixed_test_dataset(
     neg_test_all: Sequence[str],
     config: Dict,
     seed: int,
-) -> tf.data.Dataset:
+):
     neg_fixed = make_fixed_val_negatives(
         neg_test_all,
         len(pos_test_all),
         neg_pos_ratio=config["data"]["pos_neg_ratio"],
         seed=seed,
     )
-    return build_val_dataset(pos_test_all, neg_fixed, config=config)
+    return (build_val_dataset(pos_test_all, neg_fixed, config=config), neg_fixed)
 
 
 def build_file_list(df: pd.DataFrame, idx, target: str):
@@ -190,17 +193,33 @@ def build_file_lists(
             config=config,
             seed=fold_id,
         )
-        test_ds = make_fixed_test_dataset(
+        test_ds, test_idx = make_fixed_test_dataset(
             pos_test_all,
             neg_test_all,
             config=config,
             seed=fold_id,
         )
+
+        test_df = []
+        for i in test_idx:
+            test_df.append(
+                df[
+                    (df["path"] == i[0]) & (df["start"] == i[1]) & (df["end"] == i[2])
+                ].iloc[0]
+            )
+        for i in pos_test_all:
+            test_df.append(
+                df[
+                    (df["path"] == i[0]) & (df["start"] == i[1]) & (df["end"] == i[2])
+                ].iloc[0]
+            )
+
         out.append(
             {
                 "fold_id": fold_id,
                 "train_ds": train_ds,
                 "test_ds": test_ds,
+                "test_df": pd.DataFrame(test_df),
                 "train_size": (1 + config["data"]["pos_neg_ratio"]) * len(pos_tr_all),
                 "test_size": (1 + config["data"]["pos_neg_ratio"]) * len(pos_test_all),
             }
@@ -282,13 +301,13 @@ def build_final_dataset(df: pd.DataFrame, config: Dict):
         config=config,
         seed=config["exp"]["random_state"],
     )
-    val_ds = make_fixed_test_dataset(
+    val_ds, _ = make_fixed_test_dataset(
         [x[0] for x in X_val if x[1] == 1],
         [x[0] for x in X_val if x[1] == 0],
         config=config,
         seed=config["exp"]["random_state"],
     )
-    test_ds = make_fixed_test_dataset(
+    test_ds, _ = make_fixed_test_dataset(
         [x[0] for x in X_test if x[1] == 1],
         [x[0] for x in X_test if x[1] == 0],
         config=config,

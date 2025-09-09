@@ -65,23 +65,4 @@ if __name__ == "__main__":
 
     soundscapes_df["predictions"] = predictions
 
-    soundscapes_df["true_label"] = soundscapes_df["primary_label"].apply(
-        lambda x: 1 if x == config["exp"]["target"] else 0
-    )
-
-    soundscapes_df["predicted_label"] = soundscapes_df["predictions"].apply(
-        lambda x: 1 if x >= 0.37 else 0
-    )
-
     soundscapes_df.to_csv("soundscape_predictions.csv", index=False)
-
-    print(
-        soundscapes_df[
-            soundscapes_df["predicted_label"] == soundscapes_df["true_label"]
-        ].shape[0]
-        / soundscapes_df.shape[0]
-    )
-
-    # ax = plot_confusion_matrix(soundscapes_df["true_label"], predicted_labels)
-    # ax.set_title(f"t={0.37}")
-    # plt.show()

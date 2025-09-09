@@ -7,6 +7,8 @@ import tensorflow as tf
 from librosa._typing import _STFTPad
 from scipy import signal
 
+from augments import aug_gaussian_noise_tf, aug_loudness_norm_tf
+
 
 def load_ogg_librosa(path: Sequence[str], start: float, end: float, sr: int):
     y, _ = librosa.load(
@@ -61,7 +63,6 @@ def apply_with_prob(x, p, aug_fn):
 def audio_pipeline(
     file_info: Tuple[Sequence[str], float, float],  # Filename, start time, end time
     config: Dict,
-    augment: bool = False,
 ):
     # Get the tf random generator
     tf_g1 = tf.random.get_global_generator()
@@ -78,19 +79,29 @@ def audio_pipeline(
         tf.float32,
     )
 
-    # if augment:
-    #     # Loudness Normalization
-    #     target_dbfs = tf_g1.uniform((), loud_range[0], loud_range[1])
-    #     processed = apply_with_prob(
-    #         audio_file, p_loud, lambda: aug_loudness_norm_tf(processed, target_dbfs)
-    #     )
-    #
-    #     # Add Gaussian noise
-    #     gaussian_snr = tf_g1.uniform([], gaus_range[0], gaus_range[1])
-    #     processed = apply_with_prob(
-    #         audio_file, p_gaus, lambda: aug_gaussian_noise_tf(processed, gaussian_snr)
-    #     )
-    # else:
+    # Loudness Normalization
+    # target_dbfs = tf_g1.uniform(
+    #     (),
+    #     config["data"]["augments"]["loud_range"][0],
+    #     config["data"]["augments"]["loud_range"][1],
+    # )
+    # processed = apply_with_prob(
+    #     audio_file,
+    #     config["data"]["augments"]["p_loud"],
+    #     lambda: aug_loudness_norm_tf(audio_file, target_dbfs),
+    # )
+
+    # Add Gaussian noise
+    gaussian_snr = tf_g1.uniform(
+        [],
+        config["data"]["augments"]["gaus_range"][0],
+        config["data"]["augments"]["gaus_range"][1],
+    )
+    processed = apply_with_prob(
+        audio_file,
+        config["data"]["augments"]["p_gaus"],
+        lambda: aug_gaussian_noise_tf(audio_file, gaussian_snr),
+    )
     processed = audio_file
 
     n = tf.shape(processed)[0]
@@ -124,7 +135,10 @@ def audio_pipeline(
 
     # Pass through butterworth bandpass filter
     b, a = signal.butter(
-        4, [200, 7999], fs=config["data"]["audio"]["sample_rate"], btype="band"
+        4,
+        [config["data"]["audio"]["fmin"], config["data"]["audio"]["fmax"]],
+        fs=config["data"]["audio"]["sample_rate"],
+        btype="band",
     )
     band_filter = tf.py_function(
         signal.lfilter, [b, a, processed], Tout=tf.float32, name="Filter"

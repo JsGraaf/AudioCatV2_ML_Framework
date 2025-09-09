@@ -155,17 +155,31 @@ def expand_soundscapes(df: pd.DataFrame) -> Optional[pd.DataFrame]:
 
         new_rows = []
         for pred in preds:
-            # Get the first ordered dict item
-            first = next(iter(pred[1].items()))
-            r = {
-                "path": row["path"],
-                "start": pred[0][0],
-                "end": pred[0][1],
-                "scientific_name": first[0].split("_")[0],
-                "common_name": first[0].split("_")[1],
-                "confidence": first[1],
-                "group_key": row["group_key"],
-            }
+            # Soundscape predictions can be empty
+            if (len(pred[1].items())) > 0:
+                # Get the first ordered dict item
+                first = next(iter(pred[1].items()))
+
+                r = {
+                    "path": row["path"],
+                    "start": pred[0][0],
+                    "end": pred[0][1],
+                    "scientific_name": first[0].split("_")[0],
+                    "common_name": first[0].split("_")[1],
+                    "confidence": first[1],
+                    "group_key": row["group_key"],
+                }
+            else:
+                r = {
+                    "path": row["path"],
+                    "start": pred[0][0],
+                    "end": pred[0][1],
+                    "scientific_name": "nocall",
+                    "common_name": "nocall",
+                    "confidence": 100.0,
+                    "group_key": row["group_key"],
+                }
+
             new_rows.append(r)
         rows.extend(new_rows)
 
@@ -209,7 +223,7 @@ def load_and_clean_soundscapes(
             lambda row: (
                 label_mapping[row["scientific_name"]]
                 if row["scientific_name"] in label_mapping.keys()
-                else None
+                else "nocall"
             )
         ),
         axis=1,

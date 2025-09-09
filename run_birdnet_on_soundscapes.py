@@ -74,6 +74,9 @@ for file, predictions in file_predictions:
         if len(pred[1].items()) > 0:
             valid_preds.append(pred)
 
+        # For soundscapes we want to expand even the empty rows
+        # valid_preds.append(pred)
+
     # Add valid preds to df
     predicts.append({"path": str(file), "predictions": valid_preds})
 
