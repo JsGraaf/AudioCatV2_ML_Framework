@@ -19,34 +19,34 @@ def load_ogg_librosa(path: Sequence[str], start: float, end: float, sr: int):
 
 def generate_mel_spectrogram(
     audio,
-    sr=16000,
-    n_fft=1024,
-    n_mels=128,
-    hop_length=512,
-    win_length=None,
-    window: str = "hann",
-    center=True,
-    pad_mode: _STFTPad = "constant",
-    power=2.0,
-    fmin=200,
-    fmax=8000,
-    norm="slaney",
+    sr,
+    n_fft,
+    n_mels,
+    hop_length,
+    win_length,
+    window,
+    center,
+    pad_mode,
+    power,
+    fmin,
+    fmax,
+    norm,
 ):
     # Generate mel spectrogram
     spec = librosa.feature.melspectrogram(
         y=audio,
-        sr=sr,
-        n_fft=n_fft,
-        n_mels=n_mels,
-        hop_length=hop_length,
-        win_length=win_length,
-        window=window,
-        center=center,
-        pad_mode=pad_mode,
-        power=power,
-        fmin=fmin,
-        fmax=fmax,
-        norm=norm,
+        sr=int(sr),
+        n_fft=int(n_fft),
+        n_mels=int(n_mels),
+        hop_length=int(hop_length),
+        win_length=None if win_length in (None, b"None") else int(win_length),
+        window=window.decode("utf-8"),
+        center=bool(center),
+        pad_mode=pad_mode.decode("utf-8"),
+        power=float(power),
+        fmin=int(fmin),
+        fmax=int(fmax),
+        norm=None if norm in (None, b"None") else norm.decode("utf-8"),
     )
     # Convert to dB
     spec = librosa.power_to_db(spec, ref=np.max)
@@ -80,16 +80,16 @@ def audio_pipeline(
     )
 
     # Loudness Normalization
-    # target_dbfs = tf_g1.uniform(
-    #     (),
-    #     config["data"]["augments"]["loud_range"][0],
-    #     config["data"]["augments"]["loud_range"][1],
-    # )
-    # processed = apply_with_prob(
-    #     audio_file,
-    #     config["data"]["augments"]["p_loud"],
-    #     lambda: aug_loudness_norm_tf(audio_file, target_dbfs),
-    # )
+    target_dbfs = tf_g1.uniform(
+        (),
+        config["data"]["augments"]["loud_range"][0],
+        config["data"]["augments"]["loud_range"][1],
+    )
+    processed = apply_with_prob(
+        audio_file,
+        config["data"]["augments"]["p_loud"],
+        lambda: aug_loudness_norm_tf(audio_file, target_dbfs),
+    )
 
     # Add Gaussian noise
     gaussian_snr = tf_g1.uniform(
@@ -102,7 +102,6 @@ def audio_pipeline(
         config["data"]["augments"]["p_gaus"],
         lambda: aug_gaussian_noise_tf(audio_file, gaussian_snr),
     )
-    processed = audio_file
 
     n = tf.shape(processed)[0]
     # If shorter than desired, pad or tile
@@ -135,7 +134,7 @@ def audio_pipeline(
 
     # Pass through butterworth bandpass filter
     b, a = signal.butter(
-        4,
+        config["data"]["audio"]["butterworth_order"],
         [config["data"]["audio"]["fmin"], config["data"]["audio"]["fmax"]],
         fs=config["data"]["audio"]["sample_rate"],
         btype="band",
@@ -144,9 +143,25 @@ def audio_pipeline(
         signal.lfilter, [b, a, processed], Tout=tf.float32, name="Filter"
     )
 
+    audio_config = config["data"]["audio"]
+
     db_mel_spectrogram = tf.numpy_function(
         generate_mel_spectrogram,
-        [band_filter, config["data"]["audio"]["sample_rate"]],
+        [
+            band_filter,
+            audio_config["sample_rate"],
+            audio_config["n_fft"],
+            audio_config["n_mels"],
+            audio_config["hop_length"],
+            audio_config["win_length"],
+            audio_config["window"],
+            audio_config["center"],
+            audio_config["pad_mode"],
+            audio_config["power"],
+            audio_config["fmin"],
+            audio_config["fmax"],
+            audio_config["norm"],
+        ],
         Tout=tf.float32,
     )
 

@@ -32,7 +32,7 @@ data:
     p_gaus: 0.5
     gaus_range: [5, 20]
 
-    p_spec: 0.5
+    p_spec: 0.0
 
 ml:
   batch_size: 32

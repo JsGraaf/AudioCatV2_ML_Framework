@@ -65,11 +65,13 @@ def build_binary_cnn(
             name="binary_focal_crossentropy",
             from_logits=False,
         ),
+        # loss=keras.losses.BinaryCrossentropy(from_logits=False),
         metrics=[
-            keras.metrics.AUC(name="pr_auc", curve="ROC"),
+            keras.metrics.AUC(name="pr_auc", curve="PR"),
             keras.metrics.Precision(name="precision"),
             keras.metrics.Recall(name="recall"),
             keras.metrics.MeanSquaredError(name="Brier Score"),
+            keras.metrics.F1Score(name="F1", average=None, threshold=0.01),
         ],
     )
     return model

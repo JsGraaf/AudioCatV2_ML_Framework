@@ -1,6 +1,6 @@
 exp:
   name: "Testing"
-  target: "rucwar"
+  target: "bobfly1"
   random_state: 42
 
 data:
@@ -10,9 +10,10 @@ data:
   n_splits: 10
   pos_neg_ratio: 3
   audio:
-    sample_rate: 32000
-    n_frames: 188
-    n_mels: 128
+    butterworth_order: 4
+    sample_rate: 16000
+    n_frames: 94
+    n_mels: 80
     n_fft: 1024
     hop_length: 512
     win_length: None
@@ -21,7 +22,7 @@ data:
     pad_mode: "constant"
     power: 2.0
     fmin: 200
-    fmax: 8000
+    fmax: 7999
     norm: "slaney"
     fill_type: "pad"
     seconds: 3

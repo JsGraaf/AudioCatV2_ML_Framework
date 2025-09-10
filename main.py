@@ -4,6 +4,7 @@ import os
 import numpy as np
 import pandas as pd
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+from tf import keras
 
 from cross_validation import make_cv_splits
 from init import init
@@ -11,6 +12,8 @@ from load_birdclef import load_and_clean_birdclef
 from metric_utils import get_scores_per_class, plot_pr_with_thresholds
 from misc import load_config
 from models.binary_cnn import build_binary_cnn
+from models.miniresnet import get_model
+from models.tinychirp import build_cnn_mel
 from tf_datasets import build_file_lists
 
 if __name__ == "__main__":
@@ -75,6 +78,15 @@ if __name__ == "__main__":
             alpha=0.3,
             gamma=2,
         )
+        # model = build_cnn_mel(
+        #     input_shape=(
+        #         config["data"]["audio"]["n_mels"],
+        #         config["data"]["audio"]["n_frames"],
+        #         1,
+        #     ),
+        #     alpha=0.3,
+        #     gamma=2,
+        # )
 
         # Callbacks
         early = EarlyStopping(

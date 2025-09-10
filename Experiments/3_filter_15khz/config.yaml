@@ -26,13 +26,13 @@ data:
     fill_type: "pad"
     seconds: 3
   augments:
-    p_loud: 0.5
+    p_loud: 0.0
     loud_range: (-26.0, -18.0)
 
-    p_gaus: 0.5
+    p_gaus: 0.0
     gaus_range: (5, 20)
 
-    p_spec: 0.5
+    p_spec: 0.0
 
 ml:
   batch_size: 32

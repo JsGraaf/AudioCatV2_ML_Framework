@@ -13,6 +13,7 @@ from load_birdclef import load_and_clean_soundscapes
 from metric_utils import plot_confusion_matrix
 from misc import load_config
 from models.binary_cnn import build_binary_cnn
+from models.tinychirp import build_cnn_mel
 from tf_datasets import make_soundscape_dataset
 
 if __name__ == "__main__":
@@ -58,10 +59,18 @@ if __name__ == "__main__":
         )
     )
 
+    # model = build_cnn_mel(
+    #     input_shape=(
+    #         config["data"]["audio"]["n_mels"],
+    #         config["data"]["audio"]["n_frames"],
+    #         1,
+    #     )
+    # )
+
     # Load the weights
     model.load_weights(config["ml"]["model_path"])
 
-    predictions = model.predict(soundscape_ds)
+    predictions = model.predict(soundscape_ds).ravel()
 
     soundscapes_df["predictions"] = predictions
 

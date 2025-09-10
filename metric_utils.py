@@ -167,7 +167,7 @@ def plot_pr_with_thresholds(
     plt.show()
 
 
-def get_scores_per_class(df: pd.DataFrame, min_precision: float = 0.5):
+def get_scores_per_class(df: pd.DataFrame, min_precision: float = 0.3):
     best_scores = {}
 
     # Prepare score array
@@ -204,9 +204,11 @@ def get_scores_per_class(df: pd.DataFrame, min_precision: float = 0.5):
             if p > best_scores[c]["precision"]["val"]:
                 best_scores[c]["precision"]["t"] = t
                 best_scores[c]["precision"]["val"] = p
+                best_scores[c]["precision"]["recall"] = r
             if r > best_scores[c]["recall"]["val"]:
                 best_scores[c]["recall"]["t"] = t
                 best_scores[c]["recall"]["val"] = r
+                best_scores[c]["recall"]["precision"] = p
             if f1 > best_scores[c]["f1"]["val"]:
                 best_scores[c]["f1"]["t"] = t
                 best_scores[c]["f1"]["val"] = f1

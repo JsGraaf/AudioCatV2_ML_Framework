@@ -258,7 +258,7 @@ def build_final_dataset(df: pd.DataFrame, config: Dict):
     all_labels = [x[1] for x in all_data]
 
     # Split into train and test
-    X_train, X_test, y_train, y_test = train_test_split(
+    X_trainval, X_test, y_train, y_test = train_test_split(
         all_idx,
         all_labels,
         test_size=0.1,
@@ -268,7 +268,7 @@ def build_final_dataset(df: pd.DataFrame, config: Dict):
 
     # Split train further into train and validation
     X_train, X_val, y_train, y_val = train_test_split(
-        X_train,
+        X_trainval,
         y_train,
         test_size=0.1,
         random_state=config["exp"]["random_state"],
@@ -281,8 +281,8 @@ def build_final_dataset(df: pd.DataFrame, config: Dict):
     X_test = list(zip(X_test, y_test))
 
     pos_train = len([x for x in X_train if x[1] == 1])
-    pos_val = len([x for x in X_train if x[1] == 1])
-    pos_test = len([x for x in X_train if x[1] == 1])
+    pos_val = len([x for x in X_val if x[1] == 1])
+    pos_test = len([x for x in X_test if x[1] == 1])
 
     logging.info("Final training set")
     logging.info(
