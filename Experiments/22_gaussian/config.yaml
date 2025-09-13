@@ -10,41 +10,32 @@ data:
   n_splits: 10
   pos_neg_ratio: 3
   audio:
-    butterworth_order: 6
-    sample_rate: 22000
-    n_frames: 166
-    n_mels: 96
-    n_fft: 512
-    hop_length: 400
+    butterworth_order: 4
+    sample_rate: 16000
+    n_frames: 94
+    n_mels: 128
+    n_fft: 1024
+    hop_length: 512
     win_length: None
-    window: "hamming"
+    window: "hann"
     center: True
     pad_mode: "constant"
     power: 2.0
-    fmin: 1000
-    fmax: 10000
+    fmin: 200
+    fmax: 7999
     norm: "slaney"
     fill_type: "pad"
     seconds: 3
   augments:
-    band_low_freq: 1000
-    band_high_freq: 9000
+    p_loud: 0.0
+    loud_range: [-26.0, -18.0]
 
-    notch_width: 500
+    p_gaus: 1.0
+    gaus_range: [10, 20]
 
-    p_loud: 0.51027
-    loud_range: [-28.0, -18.0]
-
-    p_gaus: 0.1717
-    gaus_range: [5, 15]
-
-    p_spec: 0.019
-    spec_freq_masks: 2
-    spec_max_freq_width: 16
-    spec_time_masks: 2
-    spec_max_time_width: 32
+    p_spec: 0.5
 
 ml:
   batch_size: 32
-  epochs_per_fold: 40
+  epochs_per_fold: 50
   model_path: "output/full_training_model.keras"

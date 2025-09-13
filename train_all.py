@@ -9,6 +9,7 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 
+from callbacks import BestF1OnVal
 from cross_validation import make_cv_splits
 from init import init
 from load_birdclef import load_and_clean_birdclef
@@ -76,7 +77,7 @@ if __name__ == "__main__":
     # )
 
     early = EarlyStopping(
-        monitor="val_pr_auc",
+        monitor="val_recall_at_p90",
         mode="max",
         patience=8,
         min_delta=1e-3,
@@ -85,13 +86,11 @@ if __name__ == "__main__":
     )
     ckpt = ModelCheckpoint(
         "output/best_train_all.keras",
-        monitor="val_pr_auc",
+        monitor="val_recall_at_p90",
         mode="max",
         save_best_only=True,
         verbose=1,
     )
-
-    print(datasets["val_size"])
 
     model.fit(
         datasets["train_ds"],
@@ -104,7 +103,11 @@ if __name__ == "__main__":
         callbacks=[early, ckpt],
     )
 
-    results = model.evaluate(datasets["test_ds"], verbose=1, return_dict=True)
+    results = model.evaluate(
+        datasets["test_ds"],
+        verbose=1,
+        return_dict=True,
+    )
 
     model.save("output/full_training_model.keras")
 

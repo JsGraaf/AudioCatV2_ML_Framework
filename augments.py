@@ -77,7 +77,8 @@ def aug_specaugment_tf(
         )
         return s * mask
 
-    for _ in range(2):  # loop vars must be static; use fixed counts
+    for _ in range(max_freq_masks):  # loop vars must be static; use fixed counts
         spec = _mask_freq(spec)
+    for _ in range(max_time_masks):
         spec = _mask_time(spec)
     return spec

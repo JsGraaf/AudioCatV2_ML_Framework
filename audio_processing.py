@@ -7,7 +7,7 @@ import tensorflow as tf
 from librosa._typing import _STFTPad
 from scipy import signal
 
-from augments import aug_gaussian_noise_tf, aug_loudness_norm_tf
+from augments import aug_gaussian_noise_tf, aug_loudness_norm_tf, aug_specaugment_tf
 
 
 def load_ogg_librosa(path: Sequence[str], start: float, end: float, sr: int):
@@ -39,14 +39,18 @@ def generate_mel_spectrogram(
         n_fft=int(n_fft),
         n_mels=int(n_mels),
         hop_length=int(hop_length),
-        win_length=None if win_length in (None, b"None") else int(win_length),
-        window=window.decode("utf-8"),
+        win_length=None if win_length in (None, "None", b"None") else int(win_length),
+        window=window if isinstance(window, str) else window.decode("utf-8"),
         center=bool(center),
-        pad_mode=pad_mode.decode("utf-8"),
+        pad_mode=pad_mode if isinstance(pad_mode, str) else pad_mode.decode("utf-8"),
         power=float(power),
         fmin=int(fmin),
         fmax=int(fmax),
-        norm=None if norm in (None, b"None") else norm.decode("utf-8"),
+        norm=(
+            None
+            if norm in (None, "None", b"None")
+            else (norm if isinstance(norm, str) else norm.decode("utf-8"))
+        ),
     )
     # Convert to dB
     spec = librosa.power_to_db(spec, ref=np.max)
@@ -56,13 +60,14 @@ def generate_mel_spectrogram(
 def apply_with_prob(x, p, aug_fn):
     """aug_fn must be a zero-arg callable returning a tensor like x."""
     gen = tf.random.get_global_generator()
-    u = gen.uniform((), 0, 1.0)
+    u = gen.uniform((), 0.01, 1.0)
     return tf.cond(u < p, true_fn=aug_fn, false_fn=lambda: tf.identity(x))
 
 
 def audio_pipeline(
     file_info: Tuple[Sequence[str], float, float],  # Filename, start time, end time
     config: Dict,
+    augments: bool,
 ):
     # Get the tf random generator
     tf_g1 = tf.random.get_global_generator()
@@ -87,7 +92,7 @@ def audio_pipeline(
     )
     processed = apply_with_prob(
         audio_file,
-        config["data"]["augments"]["p_loud"],
+        config["data"]["augments"]["p_loud"] if augments else 0.0,
         lambda: aug_loudness_norm_tf(audio_file, target_dbfs),
     )
 
@@ -99,7 +104,7 @@ def audio_pipeline(
     )
     processed = apply_with_prob(
         audio_file,
-        config["data"]["augments"]["p_gaus"],
+        config["data"]["augments"]["p_gaus"] if augments else 0.0,
         lambda: aug_gaussian_noise_tf(audio_file, gaussian_snr),
     )
 
@@ -135,9 +140,12 @@ def audio_pipeline(
     # Pass through butterworth bandpass filter
     b, a = signal.butter(
         config["data"]["audio"]["butterworth_order"],
-        [config["data"]["audio"]["fmin"], config["data"]["audio"]["fmax"]],
+        [
+            config["data"]["augments"]["band_low_freq"],
+            config["data"]["augments"]["band_high_freq"],
+        ],
         fs=config["data"]["audio"]["sample_rate"],
-        btype="band",
+        btype="bandpass",
     )
     band_filter = tf.py_function(
         signal.lfilter, [b, a, processed], Tout=tf.float32, name="Filter"
@@ -168,6 +176,18 @@ def audio_pipeline(
     db_mel_spectrogram = tf.ensure_shape(
         db_mel_spectrogram,
         shape=(config["data"]["audio"]["n_mels"], config["data"]["audio"]["n_frames"]),
+    )
+
+    db_mel_spectrogram = apply_with_prob(
+        db_mel_spectrogram,
+        config["data"]["augments"]["p_spec"] if augments else 0.0,
+        lambda: aug_specaugment_tf(
+            db_mel_spectrogram,
+            config["data"]["augments"]["spec_freq_masks"],
+            config["data"]["augments"]["spec_time_masks"],
+            config["data"]["augments"]["spec_max_freq_width"],
+            config["data"]["augments"]["spec_max_time_width"],
+        ),
     )
 
     return db_mel_spectrogram

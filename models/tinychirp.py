@@ -8,7 +8,7 @@ def build_cnn_mel(
     pool_size=(2, 2),
     dense_units=8,
     lr=1e-3,
-    padding="same",  # "valid" mimics your shrinking dims; "same" keeps size
+    padding="valid",  # "valid" mimics your shrinking dims; "same" keeps size
     alpha=0.3,
     gamma=2,
 ):

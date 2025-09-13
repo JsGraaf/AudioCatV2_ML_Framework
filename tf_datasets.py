@@ -43,10 +43,10 @@ def build_train_dataset(
     labels_neg = tf.zeros([len(neg_files)], dtype=tf.float32)
 
     def _map_pos(filename, start, end, label):
-        return audio_pipeline((filename, start, end), config), label
+        return audio_pipeline((filename, start, end), config, augments=True), label
 
     def _map_neg(filename, start, end, label):
-        return audio_pipeline((filename, start, end), config), label
+        return audio_pipeline((filename, start, end), config, augments=True), label
 
     ds_pos = tf.data.Dataset.from_tensor_slices(
         (
@@ -74,7 +74,7 @@ def build_train_dataset(
             reshuffle_each_iteration=True,
         )
     # ds = ds.batch(batch_size).map(lambda x, y: mixup_batch_binary(x, y), num_parallel_calls=tf.data.AUTOTUNE).cache().repeat()
-    ds = ds.batch(config["ml"]["batch_size"]).cache().repeat()
+    ds = ds.batch(config["ml"]["batch_size"]).cache()
     return ds
 
 
@@ -93,7 +93,7 @@ def build_val_dataset(
             labels_pos,
         )
     ).map(
-        lambda f, s, e, y: (audio_pipeline((f, s, e), config), y),
+        lambda f, s, e, y: (audio_pipeline((f, s, e), config, augments=False), y),
         num_parallel_calls=tf.data.AUTOTUNE,
     )
 
@@ -106,7 +106,7 @@ def build_val_dataset(
         )
     ).map(
         lambda f, s, e, y: (
-            audio_pipeline((f, s, e), config),
+            audio_pipeline((f, s, e), config, augments=False),
             y,
         ),
         num_parallel_calls=tf.data.AUTOTUNE,

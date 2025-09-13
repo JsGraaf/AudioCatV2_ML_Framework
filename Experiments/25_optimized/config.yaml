@@ -1,0 +1,41 @@
+exp:
+  name: "Testing"
+  target: "rucwar"
+  random_state: 42
+
+data:
+  birdclef_path: "datasets/birdclef_2021/train_metadata_birdnet.csv"
+  soundscape_path: "datasets/birdclef_2021/soundscape_metadata_birdnet.csv"
+  min_per_class: 50
+  n_splits: 10
+  pos_neg_ratio: 3
+  audio:
+    butterworth_order: 4
+    sample_rate: 16000
+    n_frames: 94
+    n_mels: 128
+    n_fft: 1024
+    hop_length: 512
+    win_length: None
+    window: "hann"
+    center: True
+    pad_mode: "constant"
+    power: 2.0
+    fmin: 200
+    fmax: 7999
+    norm: "slaney"
+    fill_type: "pad"
+    seconds: 3
+  augments:
+    p_loud: 0.8
+    loud_range: [-26.0, -18.0]
+
+    p_gaus: 0.8
+    gaus_range: [10, 20]
+
+    p_spec: 0.5
+
+ml:
+  batch_size: 32
+  epochs_per_fold: 50
+  model_path: "output/full_training_model.keras"

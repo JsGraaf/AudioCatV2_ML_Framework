@@ -5,10 +5,10 @@ from tensorflow import keras
 def build_binary_cnn(
     input_shape=(128, 64, 1),
     lr=1e-3,
-    l2=1e-4,
-    dropout=0.25,
-    gamma=2.0,
-    alpha=0.25,
+    l2=1e-3,
+    dropout=0.05,
+    gamma=1.0,
+    alpha=0.45,
 ):
     """
     Binary classifier for log-mel spectrograms (target vs non-target).
@@ -71,7 +71,7 @@ def build_binary_cnn(
             keras.metrics.Precision(name="precision"),
             keras.metrics.Recall(name="recall"),
             keras.metrics.MeanSquaredError(name="Brier Score"),
-            keras.metrics.F1Score(name="F1", average=None, threshold=0.01),
+            keras.metrics.RecallAtPrecision(precision=0.90, name="recall_at_p90"),
         ],
     )
     return model
