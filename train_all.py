@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 from tensorflow import keras
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
 
 from callbacks import BestF1OnVal
 from cross_validation import make_cv_splits
@@ -83,12 +83,24 @@ if __name__ == "__main__":
         min_delta=1e-3,
         restore_best_weights=True,
         verbose=1,
+        start_from_epoch=10,
     )
     ckpt = ModelCheckpoint(
         "output/best_train_all.keras",
         monitor="val_recall_at_p90",
         mode="max",
         save_best_only=True,
+        verbose=1,
+    )
+
+    rlrop = ReduceLROnPlateau(
+        monitor="val_recall_at_p90",
+        mode="max",
+        factor=0.5,
+        patience=4,
+        min_delta=0.001,
+        cooldown=0,
+        min_lr=1e-6,
         verbose=1,
     )
 
@@ -100,7 +112,7 @@ if __name__ == "__main__":
         ),
         validation_data=datasets["val_ds"],
         verbose=1,
-        callbacks=[early, ckpt],
+        callbacks=[early, ckpt, rlrop],
     )
 
     results = model.evaluate(

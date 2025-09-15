@@ -12,7 +12,7 @@ data:
   audio:
     butterworth_order: 6
     sample_rate: 22000
-    n_frames: 166
+    n_frames: 121
     n_mels: 96
     n_fft: 512
     hop_length: 400
@@ -20,15 +20,15 @@ data:
     window: "hamming"
     center: True
     pad_mode: "constant"
-    power: 2.0
-    fmin: 1000
-    fmax: 10000
+    power: 1.0
+    fmin: 200
+    fmax: 15000
     norm: "slaney"
     fill_type: "pad"
     seconds: 3
   augments:
-    band_low_freq: 1000
-    band_high_freq: 9000
+    band_low_freq: 300
+    band_high_freq: 10000
 
     notch_width: 500
 
@@ -45,6 +45,6 @@ data:
     spec_max_time_width: 32
 
 ml:
-  batch_size: 32
+  batch_size: 16
   epochs_per_fold: 40
   model_path: "output/full_training_model.keras"
