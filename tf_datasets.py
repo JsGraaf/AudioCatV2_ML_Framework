@@ -48,6 +48,16 @@ def build_train_dataset(
     def _map_neg(filename, start, end, label):
         return audio_pipeline((filename, start, end), config, augments=True), label
 
+    def _map_pos_one_hot(filename, start, end, label):
+        return audio_pipeline(
+            (filename, start, end), config, augments=True
+        ), tf.one_hot(tf.cast(label, tf.int32), depth=2)
+
+    def _map_neg_one_hot(filename, start, end, label):
+        return audio_pipeline(
+            (filename, start, end), config, augments=True
+        ), tf.one_hot(tf.cast(label, tf.int32), depth=2)
+
     ds_pos = tf.data.Dataset.from_tensor_slices(
         (
             list(f[0] for f in pos_files),
@@ -55,7 +65,11 @@ def build_train_dataset(
             list(f[2] for f in pos_files),
             labels_pos,
         )
-    ).map(_map_pos, num_parallel_calls=tf.data.AUTOTUNE)
+    )
+    if config["exp"]["one_hot"]:
+        ds_pos = ds_pos.map(_map_pos_one_hot, num_parallel_calls=tf.data.AUTOTUNE)
+    else:
+        ds_pos = ds_pos.map(_map_pos, num_parallel_calls=tf.data.AUTOTUNE)
 
     ds_neg = tf.data.Dataset.from_tensor_slices(
         (
@@ -64,7 +78,11 @@ def build_train_dataset(
             list(f[2] for f in neg_files),
             labels_neg,
         )
-    ).map(_map_neg, num_parallel_calls=tf.data.AUTOTUNE)
+    )
+    if config["exp"]["one_hot"]:
+        ds_neg = ds_neg.map(_map_neg_one_hot, num_parallel_calls=tf.data.AUTOTUNE)
+    else:
+        ds_neg = ds_neg.map(_map_neg, num_parallel_calls=tf.data.AUTOTUNE)
 
     ds = ds_pos.concatenate(ds_neg)
     if shuffle:
@@ -92,10 +110,20 @@ def build_val_dataset(
             list(f[2] for f in pos_files),
             labels_pos,
         )
-    ).map(
-        lambda f, s, e, y: (audio_pipeline((f, s, e), config, augments=False), y),
-        num_parallel_calls=tf.data.AUTOTUNE,
     )
+    if config["exp"]["one_hot"]:
+        ds_pos = ds_pos.map(
+            lambda f, s, e, y: (
+                audio_pipeline((f, s, e), config, augments=False),
+                tf.one_hot(tf.cast(y, tf.int32), depth=2),
+            ),
+            num_parallel_calls=tf.data.AUTOTUNE,
+        )
+    else:
+        ds_pos = ds_pos.map(
+            lambda f, s, e, y: (audio_pipeline((f, s, e), config, augments=False), y),
+            num_parallel_calls=tf.data.AUTOTUNE,
+        )
 
     ds_neg = tf.data.Dataset.from_tensor_slices(
         (
@@ -104,13 +132,23 @@ def build_val_dataset(
             list(f[2] for f in neg_files),
             labels_neg,
         )
-    ).map(
-        lambda f, s, e, y: (
-            audio_pipeline((f, s, e), config, augments=False),
-            y,
-        ),
-        num_parallel_calls=tf.data.AUTOTUNE,
     )
+    if config["exp"]["one_hot"]:
+        ds_neg = ds_neg.map(
+            lambda f, s, e, y: (
+                audio_pipeline((f, s, e), config, augments=False),
+                tf.one_hot(tf.cast(y, tf.int32), depth=2),
+            ),
+            num_parallel_calls=tf.data.AUTOTUNE,
+        )
+    else:
+        ds_neg = ds_neg.map(
+            lambda f, s, e, y: (
+                audio_pipeline((f, s, e), config, augments=False),
+                y,
+            ),
+            num_parallel_calls=tf.data.AUTOTUNE,
+        )
 
     return ds_pos.concatenate(ds_neg).batch(config["ml"]["batch_size"]).cache()
 

@@ -31,6 +31,13 @@ def generate_mel_spectrogram(
     fmin,
     fmax,
     norm,
+    use_pcen,
+    pcen_time_constant,
+    pcen_gain,
+    pcen_bias,
+    pcen_power,
+    pcen_eps,
+    pcen_log1p,
 ):
     # Generate mel spectrogram
     spec = librosa.feature.melspectrogram(
@@ -53,8 +60,25 @@ def generate_mel_spectrogram(
         ),
     )
     # Convert to dB
-    spec = librosa.power_to_db(spec, ref=np.max)
-    return spec
+    if not use_pcen:
+        return librosa.power_to_db(spec, ref=np.max)
+
+    spec_pcen = librosa.pcen(
+        spec,
+        sr=int(sr),
+        hop_length=int(hop_length),
+        time_constant=float(pcen_time_constant),
+        gain=float(pcen_gain),
+        bias=float(pcen_bias),
+        power=float(pcen_power),
+        eps=float(pcen_eps),
+    ).astype(np.float32)
+
+    if pcen_log1p:
+        # Optional extra compression (usually unnecessary)
+        spec_pcen = np.log1p(spec_pcen).astype(np.float32)
+
+    return spec_pcen
 
 
 def apply_with_prob(x, p, aug_fn):
@@ -169,6 +193,13 @@ def audio_pipeline(
             audio_config["fmin"],
             audio_config["fmax"],
             audio_config["norm"],
+            audio_config["use_pcen"],
+            audio_config["pcen_time_constant"],
+            audio_config["pcen_gain"],
+            audio_config["pcen_bias"],
+            audio_config["pcen_power"],
+            audio_config["pcen_eps"],
+            audio_config["pcen_log1p"],
         ],
         Tout=tf.float32,
     )

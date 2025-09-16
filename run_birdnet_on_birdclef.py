@@ -8,7 +8,7 @@ from birdnet.audio_based_prediction_mp import predict_species_within_audio_files
 # --- CONFIG ---
 AUDIO_ROOT = "datasets/birdclef_2021/train_short_audio"
 META_CSV = "datasets/birdclef_2021/train_metadata.csv"
-MIN_CONF = 0.7
+MIN_CONF = 0.9
 
 # Tensorflow GPUs
 print("Num GPUs Available: ", len(tf.config.list_physical_devices("GPU")))
@@ -50,7 +50,9 @@ recordings = birdclef_df.apply(process_row, axis=1)
 recordings_temp = [r[0]["path"] for r in recordings]
 
 file_predictions = list(
-    predict_species_within_audio_files_mp(recordings_temp, min_confidence=0.8)
+    predict_species_within_audio_files_mp(
+        recordings_temp, min_confidence=MIN_CONF, chunk_overlap_s=1.5
+    )
 )
 
 predicts = []

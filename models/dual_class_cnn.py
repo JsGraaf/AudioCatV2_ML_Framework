@@ -2,7 +2,7 @@ from tensorflow import keras
 
 
 # --------- Simple binary CNN ----------
-def build_binary_cnn(
+def build_dual_class_cnn(
     input_shape=(128, 64, 1),
     lr=1e-3,
     l2=1e-3,
@@ -54,23 +54,26 @@ def build_binary_cnn(
     x = keras.layers.GlobalAveragePooling2D()(x)
     x = keras.layers.Dense(128, activation="relu", kernel_regularizer=L2)(x)
     x = keras.layers.Dropout(dropout)(x)
-    outputs = keras.layers.Dense(1, activation="sigmoid")(x)  # binary
+    outputs = keras.layers.Dense(2, activation="softmax")(x)  # binary
 
     model = keras.Model(inputs, outputs)
     model.compile(
         optimizer=keras.optimizers.Adam(learning_rate=lr),
-        loss=keras.losses.BinaryFocalCrossentropy(
-            alpha=alpha,
-            gamma=gamma,
-            name="binary_focal_crossentropy",
-            from_logits=False,
-        ),
+        # loss=keras.losses.BinaryFocalCrossentropy(
+        #     alpha=alpha,
+        #     gamma=gamma,
+        #     name="binary_focal_crossentropy",
+        #     from_logits=False,
+        # ),
+        loss=keras.losses.CategoricalCrossentropy(from_logits=False),
+        # loss=keras.losses.BinaryCrossentropy(from_logits=False),
         metrics=[
-            keras.metrics.AUC(name="pr_auc", curve="PR"),
-            keras.metrics.Precision(name="precision"),
-            keras.metrics.Recall(name="recall"),
-            keras.metrics.MeanSquaredError(name="Brier Score"),
-            keras.metrics.RecallAtPrecision(precision=0.90, name="recall_at_p90"),
+            # keras.metrics.AUC(name="pr_auc", curve="PR", class_id=1),
+            keras.metrics.Precision(name="precision", class_id=1),
+            keras.metrics.Recall(name="recall", class_id=1),
+            keras.metrics.RecallAtPrecision(
+                precision=0.90, name="recall_at_p90", class_id=1
+            ),
         ],
     )
     return model

@@ -33,18 +33,20 @@ def build_cnn_mel(
 
     model = keras.Model(inputs, outputs)
     model.compile(
-        optimizer=keras.optimizers.Adam(lr),
-        # loss=keras.losses.BinaryCrossentropy(),
+        optimizer=keras.optimizers.Adam(learning_rate=lr),
         loss=keras.losses.BinaryFocalCrossentropy(
             alpha=alpha,
             gamma=gamma,
             name="binary_focal_crossentropy",
             from_logits=False,
         ),
+        # loss=keras.losses.BinaryCrossentropy(from_logits=False),
         metrics=[
-            keras.metrics.AUC(curve="PR", name="pr_auc"),
+            keras.metrics.AUC(name="pr_auc", curve="PR"),
             keras.metrics.Precision(name="precision"),
             keras.metrics.Recall(name="recall"),
+            keras.metrics.MeanSquaredError(name="Brier Score"),
+            keras.metrics.RecallAtPrecision(precision=0.90, name="recall_at_p90"),
         ],
     )
     return model

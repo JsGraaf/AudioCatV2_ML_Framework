@@ -167,6 +167,70 @@ def plot_pr_with_thresholds(
     plt.show()
 
 
+def get_scores_per_class_one_hot(df: pd.DataFrame, min_precision: float = 0.3):
+    best_scores = {}
+
+    # Prepare score array
+    print(df["true_label"])
+    for c in df["true_label"].unique():
+        best_scores[c] = {
+            "precision": {"t": 0, "val": -1},
+            "recall": {"t": 0, "val": -1},
+            "f1": {"t": 0, "val": -1},
+            "p90": {"t": 0, "val": -1},
+        }
+
+    for t in np.arange(0.01, 1.0, 0.01):
+        df["predicted_label"] = df["p_class1"].apply(lambda x: 1 if x >= t else 0)
+
+        # Calculate the overall accuracy
+        acc = (df[df["predicted_label"] == df["true_label"]].shape[0] / df.shape[0],)
+
+        report = classification_report(
+            df["true_label"],
+            df["predicted_label"],
+            zero_division=0.0,
+        )
+
+        # Calculate the scores
+        prec, rec, f1, support = precision_recall_fscore_support(
+            df["true_label"],
+            df["predicted_label"],
+            labels=[0, 1],
+            average=None,
+            zero_division=0.0,
+        )
+
+        for c, p, r, f1 in zip([0, 1], prec, rec, f1):
+            # Search for the best metrics
+            if p >= best_scores[c]["precision"]["val"]:
+                if (
+                    p > (best_scores[c]["precision"]["val"])
+                    or r > best_scores[c]["recall"]["val"]
+                ):
+                    best_scores[c]["precision"]["t"] = t
+                    best_scores[c]["precision"]["val"] = p
+                    best_scores[c]["precision"]["recall"] = r
+            if r >= best_scores[c]["recall"]["val"]:
+                if (
+                    r > best_scores[c]["recall"]["val"]
+                    or p > best_scores[c]["precision"]["val"]
+                ):
+                    best_scores[c]["recall"]["t"] = t
+                    best_scores[c]["recall"]["val"] = r
+                    best_scores[c]["recall"]["precision"] = p
+            if f1 > best_scores[c]["f1"]["val"]:
+                best_scores[c]["f1"]["t"] = t
+                best_scores[c]["f1"]["val"] = f1
+            # Search for recall at p90
+            if p >= 0.7 and r > best_scores[c]["p90"]["val"]:
+                best_scores[c]["p90"]["t"] = t
+                best_scores[c]["p90"]["val"] = r
+                best_scores[c]["p90"]["precision"] = p
+
+    return best_scores
+
+
 def get_scores_per_class(df: pd.DataFrame, min_precision: float = 0.3):
     best_scores = {}
 

@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 
 import librosa
 import matplotlib.pyplot as plt
@@ -15,27 +16,13 @@ from init import init
 from load_birdclef import load_and_clean_birdclef
 from misc import load_config
 from models.binary_cnn import build_binary_cnn
-from models.miniresnet import get_model
+from models.dual_class_cnn import build_dual_class_cnn
+from models.miniresnet import build_miniresnet
 from models.tinychirp import build_cnn_mel
 from tf_datasets import build_final_dataset
 
-if __name__ == "__main__":
-    logging.getLogger().setLevel(logging.INFO)
-    # Load the config
-    CONFIG_PATH = "config.yaml"
-    logging.info(f"Loading config from {CONFIG_PATH}")
-    config = load_config(CONFIG_PATH)
 
-    if config is None:
-        exit(1)
-
-    logging.info(
-        f"Running Experiment {config['exp']['name']} for {config['exp']['target']}"
-    )
-
-    # Initialize the framework
-    init(config["exp"]["random_state"])
-
+def get_birdclef_datasets(config):
     # Load the dataset
     logging.info(f"Loading birdclef data from {config['data']['birdclef_path']}")
 
@@ -58,15 +45,81 @@ if __name__ == "__main__":
     logging.info(f"Making the final dataset")
     datasets = build_final_dataset(birdclef_df, config)
 
-    # Train the model
+    return datasets
 
-    model = build_binary_cnn(
-        input_shape=(
-            config["data"]["audio"]["n_mels"],
-            config["data"]["audio"]["n_frames"],
-            1,
-        )
+
+def get_birdset_dataset(config):
+    # Load the dataset
+    logging.info(f"Loading birdclef data from {config['data']['birdset_path']}")
+
+    birdset_df = pd.read_csv(config["data"]["birdset_path"])
+
+    # Check that all the paths exist
+    birdset_df.apply(
+        lambda x: print(f"Failed {x}") if not os.path.isfile(x["path"]) else {}, axis=1
     )
+
+    # Check if the target is in the df
+    if config["exp"]["target"] not in birdset_df["primary_label"].unique():
+        logging.error("Target Category not in df!")
+        sys.exit(1)
+
+    # Create a dataset containing all positives and pos_neg_ratio times negatives
+    logging.info(f"Making the final dataset")
+    datasets = build_final_dataset(birdset_df, config)
+
+    return datasets
+
+
+if __name__ == "__main__":
+    logging.getLogger().setLevel(logging.INFO)
+    # Load the config
+    CONFIG_PATH = "config.yaml"
+    logging.info(f"Loading config from {CONFIG_PATH}")
+    config = load_config(CONFIG_PATH)
+
+    if config is None:
+        exit(1)
+
+    logging.info(
+        f"Running Experiment {config['exp']['name']} for {config['exp']['target']}"
+    )
+
+    # Initialize the framework
+    init(config["exp"]["random_state"])
+
+    if config["data"]["use_birdset"]:
+        logging.info("[Info] Loading birdset!")
+        datasets = get_birdset_dataset(config)
+    else:
+        logging.info("[Info] Loading Birdclef")
+        datasets = get_birdclef_datasets(config)
+
+    # Train the model
+    if config["exp"]["one_hot"]:
+        model = build_dual_class_cnn(
+            input_shape=(
+                config["data"]["audio"]["n_mels"],
+                config["data"]["audio"]["n_frames"],
+                1,
+            )
+        )
+    else:
+        # model = build_binary_cnn(
+        #     input_shape=(
+        #         config["data"]["audio"]["n_mels"],
+        #         config["data"]["audio"]["n_frames"],
+        #         1,
+        #     )
+        # )
+        model = build_miniresnet(
+            input_shape=(
+                config["data"]["audio"]["n_mels"],
+                config["data"]["audio"]["n_frames"],
+                1,
+            ),
+            n_classes=1,
+        )
 
     # model = build_cnn_mel(
     #     input_shape=(
@@ -74,6 +127,15 @@ if __name__ == "__main__":
     #         config["data"]["audio"]["n_frames"],
     #         1,
     #     )
+    # )
+
+    # model = get_model(
+    #     input_shape=(
+    #         config["data"]["audio"]["n_mels"],
+    #         config["data"]["audio"]["n_frames"],
+    #         1,
+    #     ),
+    #     stacks=2,
     # )
 
     early = EarlyStopping(

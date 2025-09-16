@@ -1,24 +1,23 @@
 exp:
   name: "Testing"
-  target: "rocwre"
-  # target: "rucwar"
+  # target: "rocwre"
+  target: "rucwar"
   random_state: 42
   one_hot: False
 
 data:
   birdclef_path: "datasets/birdclef_2021/train_metadata_birdnet.csv"
   birdset_path: "output/hsn_events.csv"
-  use_birdset: True
+  use_birdset: False
   soundscape_path: "datasets/birdclef_2021/soundscape_metadata_birdnet.csv"
-  birdset_soundscape_path: "output/hsn_soundscapes.csv"
   min_per_class: 50
   n_splits: 10
   pos_neg_ratio: 3
   audio:
     butterworth_order: 6
-    sample_rate: 32000
-    n_frames: 188
-    n_mels: 128
+    sample_rate: 22050
+    n_frames: 130
+    n_mels: 96
     n_fft: 1024
     hop_length: 512
     win_length: None
