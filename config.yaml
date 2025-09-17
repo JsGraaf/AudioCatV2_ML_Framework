@@ -1,21 +1,21 @@
 exp:
   name: "Testing"
-  target: "rocwre"
-  # target: "rucwar"
+  # target: "rocwre"
+  target: "rucwar"
   random_state: 42
   one_hot: False
 
 data:
   birdclef_path: "datasets/birdclef_2021/train_metadata_birdnet.csv"
   birdset_path: "output/hsn_events.csv"
-  use_birdset: True
+  use_birdset: False
   soundscape_path: "datasets/birdclef_2021/soundscape_metadata_birdnet.csv"
   birdset_soundscape_path: "output/hsn_soundscapes.csv"
   min_per_class: 50
   n_splits: 10
   pos_neg_ratio: 3
   audio:
-    butterworth_order: 2
+    butterworth_order: 7
     sample_rate: 32000
     n_frames: 241
     n_mels: 80
@@ -27,7 +27,7 @@ data:
     pad_mode: "constant"
     power: 2.0
     fmin: 200
-    fmax: 6000
+    fmax: 15000
     norm: "slaney"
     fill_type: "pad"
     seconds: 3
@@ -41,7 +41,7 @@ data:
 
   augments:
     band_low_freq: 500
-    band_high_freq: 7500
+    band_high_freq: 9000
 
     notch_width: 500
 
@@ -58,7 +58,11 @@ data:
     spec_max_time_width: 32
 
 ml:
-  batch_size: 32
+  batch_size: 1
   epochs_per_fold: 100
   model_path: "output/full_training_model.keras"
   loss: "FOCAL" # "FOCAL" | "BCE"
+  mixup:
+    enabled: true
+    alpha: 0.4
+    prob: 1.0

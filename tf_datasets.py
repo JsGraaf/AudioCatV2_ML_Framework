@@ -9,6 +9,60 @@ from sklearn.model_selection import train_test_split
 from audio_processing import audio_pipeline
 
 
+def _sample_beta(alpha: float, dtype=tf.float32) -> tf.Tensor:
+    """Scalar λ ~ Beta(alpha, alpha) without tfp."""
+    if alpha <= 0.0:
+        return tf.constant(1.0, dtype)
+    a = tf.constant(alpha, dtype)
+    g1 = tf.random.gamma(shape=[], alpha=a, dtype=dtype)  # Gamma(a,1)
+    g2 = tf.random.gamma(shape=[], alpha=a, dtype=dtype)
+    return g1 / (g1 + g2 + 1e-8)
+
+
+def _mixup_batch(
+    x: tf.Tensor, y: tf.Tensor, alpha: float
+) -> tuple[tf.Tensor, tf.Tensor]:
+    """
+    Pairwise Mixup on a batched (x,y).
+    x: [B,H,W,C] or [B,H,W] -> returns [B,H,W,C]
+    y: [B] (binary) or [B,K] (one-hot / multi-label)
+    """
+    y = tf.cast(y, tf.float32)
+
+    b = tf.shape(x)[0]
+
+    def no_mix():
+        return x, y
+
+    def do_mix():
+        idx = tf.random.shuffle(tf.range(b))
+        x2 = tf.gather(x, idx, axis=0)
+        y2 = tf.gather(y, idx, axis=0)
+
+        lam = _sample_beta(alpha, dtype=x.dtype)  # scalar λ
+        xm = lam * x + (1.0 - lam) * x2
+        ym = lam * y + (1.0 - lam) * y2
+        return xm, ym
+
+    return tf.cond(b > 1, do_mix, no_mix)
+
+
+def mixup_map_fn(alpha: float, prob: float = 1.0):
+    """
+    tf.data map-fn applying Mixup with probability `prob` per batch.
+    Place AFTER .batch(...) and BEFORE .prefetch(...).
+    """
+
+    def _fn(x, y):
+        y = tf.cast(y, tf.float32)
+        if prob >= 1.0:
+            return _mixup_batch(x, y, alpha)
+        r = tf.random.uniform([])
+        return tf.cond(r < prob, lambda: _mixup_batch(x, y, alpha), lambda: (x, y))
+
+    return _fn
+
+
 def plan_epoch_counts(n_pos_train: int, neg_pos_ratio: float = 2.0) -> Tuple[int, int]:
     pos_count = int(n_pos_train)
     neg_count = int(round(neg_pos_ratio * pos_count))
@@ -92,6 +146,26 @@ def build_train_dataset(
         )
     # ds = ds.batch(batch_size).map(lambda x, y: mixup_batch_binary(x, y), num_parallel_calls=tf.data.AUTOTUNE).cache().repeat()
     ds = ds.batch(config["ml"]["batch_size"]).cache()
+
+    # Conditional mixup
+    mix_cfg = config["ml"].get("mixup", {})
+    if mix_cfg.get("enabled", False):
+        alpha = float(mix_cfg.get("alpha", 0.4))  # typical 0.2–0.4
+        prob = float(mix_cfg.get("prob", 1.0))  # chance to apply per batch
+
+        if prob >= 1.0:
+            ds = ds.map(mixup_map_fn(alpha), num_parallel_calls=tf.data.AUTOTUNE)
+        else:
+            # Randomly apply with probability 'prob'
+            def maybe_mix(x, y):
+                do = tf.less(tf.random.uniform([], 0, 1), prob)
+                xm, ym = _mixup_batch(x, y, alpha)
+                return tf.cond(do, lambda: (xm, ym), lambda: (x, y))
+
+            ds = ds.map(maybe_mix, num_parallel_calls=tf.data.AUTOTUNE)
+
+    # Prefetch stays last for performance
+    ds = ds.prefetch(tf.data.AUTOTUNE)
     return ds
 
 

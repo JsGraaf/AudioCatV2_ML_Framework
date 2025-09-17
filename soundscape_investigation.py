@@ -33,33 +33,33 @@ config = load_config(CONFIG_PATH)
 if config is None:
     exit(1)
 
-config["ml"]["batch_size"] = 1
-config["data"]["audio"]["sample_rate"] = 22050
-config["data"]["audio"]["fmin"] = 1000
-config["data"]["audio"]["fmax"] = 22050
-config["data"]["augments"]["band_low_freq"] = 500
-config["data"]["augments"]["band_high_freq"] = 6000
-config["data"]["audio"]["n_mels"] = 80
-config["data"]["augments"]["p_loud"] = 0.0
-config["data"]["augments"]["p_gaus"] = 0.0
-config["data"]["augments"]["p_spec"] = 0.0
-
-
-if config["data"]["audio"]["center"]:
-    config["data"]["audio"]["n_frames"] = (
-        1
-        + (config["data"]["audio"]["seconds"] * config["data"]["audio"]["sample_rate"])
-        // config["data"]["audio"]["hop_length"]
-    )
-else:
-    config["data"]["audio"]["n_frames"] = (
-        1
-        + (
-            config["data"]["audio"]["seconds"] * config["data"]["audio"]["sample_rate"]
-            - config["data"]["audio"]["n_fft"]
-        )
-        // config["data"]["audio"]["hop_length"]
-    )
+# config["ml"]["batch_size"] = 1
+# config["data"]["audio"]["sample_rate"] = 22050
+# config["data"]["audio"]["fmin"] = 1000
+# config["data"]["audio"]["fmax"] = 22050
+# config["data"]["augments"]["band_low_freq"] = 500
+# config["data"]["augments"]["band_high_freq"] = 6000
+# config["data"]["audio"]["n_mels"] = 80
+# config["data"]["augments"]["p_loud"] = 0.0
+# config["data"]["augments"]["p_gaus"] = 0.0
+# config["data"]["augments"]["p_spec"] = 0.0
+#
+#
+# if config["data"]["audio"]["center"]:
+#     config["data"]["audio"]["n_frames"] = (
+#         1
+#         + (config["data"]["audio"]["seconds"] * config["data"]["audio"]["sample_rate"])
+#         // config["data"]["audio"]["hop_length"]
+#     )
+# else:
+#     config["data"]["audio"]["n_frames"] = (
+#         1
+#         + (
+#             config["data"]["audio"]["seconds"] * config["data"]["audio"]["sample_rate"]
+#             - config["data"]["audio"]["n_fft"]
+#         )
+#         // config["data"]["audio"]["hop_length"]
+#     )
 
 
 def build_val_dataset_notched(
@@ -176,7 +176,8 @@ def get_mic_freqs_from_soundscapes(df: pd.DataFrame):
 
 
 # Load the soundscape predcitions
-df = pd.read_csv(os.path.join(args.input_csv, "soundscape_predictions.csv"))
+df = pd.read_csv(os.path.join(args.input_csv, "soundscape_predictions.csv")).head(10)
+
 
 df = get_mic_freqs_from_soundscapes(df)
 
@@ -219,18 +220,25 @@ df = get_mic_freqs_from_soundscapes(df)
 # Create the TF dataset
 soundscape_ds = make_soundscape_dataset_notched(df, config)
 
-# for i, y in soundscape_ds.take(1):
-#     print(i.numpy())
-#     print(y.numpy())
-#     librosa.display.specshow(
-#         np.squeeze(i.numpy(), axis=0),
-#         x_axis="time",
-#         y_axis="mel",
-#         fmin=config["data"]["audio"]["fmin"],
-#         fmax=config["data"]["audio"]["fmax"],
-#     )
-#
-# plt.show()
+fig, axs = plt.subplots(nrows=2, ncols=2)
+
+for i, (x, y) in enumerate(soundscape_ds.take(4)):
+
+    librosa.display.specshow(
+        np.squeeze(x.numpy(), axis=0),
+        x_axis="time",
+        y_axis="mel",
+        sr=config["data"]["audio"]["sample_rate"],
+        hop_length=config["data"]["audio"]["hop_length"],
+        fmin=config["data"]["audio"]["fmin"],
+        fmax=config["data"]["audio"]["fmax"],
+        ax=axs[int(i % 2)][int(i / 2)],
+        cmap="magma",
+        vmin=0,
+        vmax=1,
+    )
+plt.show()
+
 
 # Load the model
 model = build_binary_cnn(

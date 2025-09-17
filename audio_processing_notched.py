@@ -52,9 +52,20 @@ def generate_mel_spectrogram(
             else (norm if isinstance(norm, str) else norm.decode("utf-8"))
         ),
     )
+
     # Convert to dB
     spec = librosa.power_to_db(spec, ref=np.max)
-    return spec
+
+    bg = np.median(spec, axis=1, keepdims=True)
+    spec = spec - bg
+
+    # Clamp to a fixed window
+    spec = np.clip(spec, -30.0, +15)
+
+    # Scale to 0, 1
+    spec = (spec + 30.0) / 45.0
+
+    return spec.astype(np.float32)
 
 
 def apply_with_prob(x, p, aug_fn):
@@ -122,9 +133,9 @@ def audio_pipeline(
         config["data"]["augments"]["gaus_range"][1],
     )
     processed = apply_with_prob(
-        audio_file,
+        processed,
         config["data"]["augments"]["p_gaus"],
-        lambda: aug_gaussian_noise_tf(audio_file, gaussian_snr),
+        lambda: aug_gaussian_noise_tf(processed, gaussian_snr),
     )
 
     n = tf.shape(processed)[0]

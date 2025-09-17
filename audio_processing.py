@@ -84,7 +84,7 @@ def generate_mel_spectrogram(
 def apply_with_prob(x, p, aug_fn):
     """aug_fn must be a zero-arg callable returning a tensor like x."""
     gen = tf.random.get_global_generator()
-    u = gen.uniform((), 0.01, 1.0)
+    u = gen.uniform([])
     return tf.cond(u < p, true_fn=aug_fn, false_fn=lambda: tf.identity(x))
 
 
@@ -127,9 +127,9 @@ def audio_pipeline(
         config["data"]["augments"]["gaus_range"][1],
     )
     processed = apply_with_prob(
-        audio_file,
+        processed,
         config["data"]["augments"]["p_gaus"] if augments else 0.0,
-        lambda: aug_gaussian_noise_tf(audio_file, gaussian_snr),
+        lambda: aug_gaussian_noise_tf(processed, gaussian_snr),
     )
 
     n = tf.shape(processed)[0]
