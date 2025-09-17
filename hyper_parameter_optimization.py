@@ -11,11 +11,11 @@ import yaml
 from tensorflow import keras
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 
+from dataset_loaders import get_birdclef_datasets, get_birdset_dataset
 from init import init
-from load_birdclef import load_and_clean_birdclef
 from misc import hp_audio_and_aug, load_config
 from models.binary_cnn_hyper import model_builder
-from tf_datasets import build_final_dataset
+from models.miniresnet_hyper import build_miniresnet_hyper
 
 
 class DataAwareHyperband(kt.Hyperband):
@@ -24,30 +24,12 @@ class DataAwareHyperband(kt.Hyperband):
 
         hp_cfg = hp_audio_and_aug(hp)
 
-        # Load the dataset
-        logging.info(f"Loading birdclef data from {hp_cfg['data']['birdclef_path']}")
-
-        birdclef_df = load_and_clean_birdclef(
-            hp_cfg["data"]["birdclef_path"],
-            hp_cfg["data"]["min_per_class"],
-        )
-
-        # Check that all the paths exist
-        birdclef_df.apply(
-            lambda x: print(f"Failed {x}") if not os.path.isfile(x["path"]) else {},
-            axis=1,
-        )
-
-        # Check if the target is in the df
-        if hp_cfg["exp"]["target"] not in birdclef_df["primary_label"].unique():
-            logging.error("Target Category not in df!")
-            exit(1)
-
-        # Create a dataset containing all positives and pos_neg_ratio times negatives
-        logging.info(f"Making the final dataset")
-
-        print(hp_cfg)
-        datasets = build_final_dataset(birdclef_df, hp_cfg)
+        if hp_cfg["data"]["use_birdset"]:
+            logging.info("[Info] Loading birdset!")
+            datasets = get_birdset_dataset(hp_cfg)
+        else:
+            logging.info("[Info] Loading Birdclef")
+            datasets = get_birdclef_datasets(hp_cfg)
 
         early = EarlyStopping(
             monitor="val_recall_at_p90",
@@ -92,13 +74,13 @@ if __name__ == "__main__":
 
     # Train the model
     tuner = DataAwareHyperband(
-        hypermodel=model_builder,
+        hypermodel=build_miniresnet_hyper,
         objective=kt.Objective("val_recall_at_p90", direction="max"),
         max_epochs=100,
         factor=3,
         seed=config["exp"]["random_state"],
         directory="my_dir",
-        project_name="binary_cnn_v2",
+        project_name="miniresnet",
     )
 
     tuner.search()

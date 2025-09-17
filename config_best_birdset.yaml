@@ -61,4 +61,3 @@ ml:
   batch_size: 32
   epochs_per_fold: 100
   model_path: "output/full_training_model.keras"
-  loss: "FOCAL" # "FOCAL" | "BCE"

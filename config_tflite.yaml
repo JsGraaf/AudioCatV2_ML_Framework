@@ -15,19 +15,19 @@ data:
   n_splits: 10
   pos_neg_ratio: 3
   audio:
-    butterworth_order: 2
+    butterworth_order: 6
     sample_rate: 32000
-    n_frames: 241
-    n_mels: 80
+    n_frames: 188
+    n_mels: 128
     n_fft: 1024
-    hop_length: 400
+    hop_length: 512
     win_length: None
-    window: "hamming"
+    window: "hann"
     center: True
     pad_mode: "constant"
     power: 2.0
-    fmin: 200
-    fmax: 6000
+    fmin: 1000
+    fmax: 11000
     norm: "slaney"
     fill_type: "pad"
     seconds: 3
@@ -40,25 +40,24 @@ data:
     pcen_log1p: False
 
   augments:
-    band_low_freq: 500
-    band_high_freq: 7500
+    band_low_freq: 1000
+    band_high_freq: 11000
 
     notch_width: 500
 
-    p_loud: 0.25
-    loud_range: [-10.0, -18.0]
+    p_loud: 0.51027
+    loud_range: [-28.0, -18.0]
 
-    p_gaus: 0.25
-    gaus_range: [0, 35]
+    p_gaus: 0.1717
+    gaus_range: [5, 15]
 
-    p_spec: 0.0
+    p_spec: 0.019
     spec_freq_masks: 2
     spec_max_freq_width: 16
     spec_time_masks: 2
     spec_max_time_width: 32
 
 ml:
-  batch_size: 32
+  batch_size: 1
   epochs_per_fold: 100
-  model_path: "output/full_training_model.keras"
-  loss: "FOCAL" # "FOCAL" | "BCE"
+  model_path: "tflite_output/full_training_model_fp32.tflite"

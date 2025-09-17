@@ -3,7 +3,6 @@ from pathlib import Path
 from typing import Optional
 
 import keras_tuner as kt
-import numpy as np
 import yaml
 
 
@@ -20,104 +19,104 @@ def load_config(path: Path = Path("config.yaml")) -> Optional[dict]:
 
 
 def hp_audio_and_aug(hp: kt.HyperParameters):
-    # Load the normal config
+    # Load base config
     CONFIG_PATH = "config.yaml"
     logging.info(f"Loading config from {CONFIG_PATH}")
     cfg = load_config(CONFIG_PATH)
     if cfg is None:
-        exit(1)
+        raise SystemExit(1)
 
     # ----- Audio front-end (mel/STFT & framing) -----
     cfg["data"]["audio"]["sample_rate"] = hp.Choice(
         "sample_rate", [16000, 22050, 32000], default=16000
     )
+    sr = cfg["data"]["audio"]["sample_rate"]
 
     # Spectrogram geometry
     cfg["data"]["audio"]["n_mels"] = hp.Choice("n_mels", [64, 80, 96, 128], default=128)
 
     # STFT params
     cfg["data"]["audio"]["n_fft"] = hp.Choice("n_fft", [512, 1024], default=1024)
+    nfft = cfg["data"]["audio"]["n_fft"]
 
-    # Hop depends a bit on n_fft: keep hops reasonable for each n_fft
-    with hp.conditional_scope("n_fft", [512]):
+    # Hop depends on n_fft (keep reasonable geometries)
+    if nfft == 512:
         cfg["data"]["audio"]["hop_length"] = hp.Int(
             "hop_length", 96, 320, step=16, default=192
         )
-    with hp.conditional_scope("n_fft", [1024]):
+    else:  # 1024
         cfg["data"]["audio"]["hop_length"] = hp.Int(
             "hop_length", 128, 512, step=16, default=256
         )
+    hop = cfg["data"]["audio"]["hop_length"]
 
-    # Window function
+    # Windowing / centering
     cfg["data"]["audio"]["window"] = hp.Choice(
         "window", ["hann", "hamming"], default="hamming"
     )
     cfg["data"]["audio"]["center"] = hp.Boolean("center", default=True)
 
-    # Mel band limits – fmax cannot exceed Nyquist
+    # Mel band limits – fmax must be ≤ Nyquist
     cfg["data"]["audio"]["fmin"] = hp.Choice("fmin", [100, 150, 200, 300], default=200)
-    # choose fmax set based on sample_rate
 
-    with hp.conditional_scope("sample_rate", [16000]):
+    if sr == 16000:
         cfg["data"]["audio"]["fmax"] = hp.Choice("fmax", [6000, 7500], default=7500)
         cfg["data"]["audio"]["band_low_freq"] = hp.Choice(
             "band_low_freq", [500, 1000], default=1000
         )
         cfg["data"]["audio"]["band_high_freq"] = hp.Choice(
-            "band_high_freq", [6000, 7500], default=7500
+            "band_high_freq", [6000, 7500, 7999], default=7500
         )
-
-    with hp.conditional_scope("sample_rate", [22050]):
+    elif sr == 22050:
         cfg["data"]["audio"]["fmax"] = hp.Choice(
-            "fmax", [7500, 9000, 10000], default=9000
+            "fmax", [7500, 9000, 11025], default=9000
         )
         cfg["data"]["audio"]["band_low_freq"] = hp.Choice(
-            "band_low_freq", [500, 1000], default=1000
+            "band_low_freq", [200, 500, 1000], default=1000
         )
         cfg["data"]["audio"]["band_high_freq"] = hp.Choice(
-            "band_high_freq", [9000, 10000], default=10000
+            "band_high_freq", [9000, 11000], default=11000
         )
-
-    with hp.conditional_scope("sample_rate", [32000]):
+    else:  # 32000
         cfg["data"]["audio"]["fmax"] = hp.Choice(
-            "fmax", [9000, 12000, 15000], default=12000
+            "fmax", [9000, 12000, 15000, 15999], default=12000
         )
         cfg["data"]["audio"]["band_low_freq"] = hp.Choice(
-            "band_low_freq", [500, 1000], default=1000
+            "band_low_freq", [200, 500, 1000], default=1000
         )
         cfg["data"]["audio"]["band_high_freq"] = hp.Choice(
-            "band_high_freq", [12000, 15000], default=15000
+            "band_high_freq", [10000, 12000, 15000, 15999], default=15000
         )
 
-    # Power-mel
+    # Power-mel choice
     cfg["data"]["audio"]["power"] = hp.Choice("power", [1.0, 2.0], default=2.0)
 
-    # Optional frontend prefilter (0 disables)
+    # Optional Butterworth bandpass (0 = disabled)
     cfg["data"]["audio"]["butterworth_order"] = hp.Choice(
         "butterworth_order", [0, 2, 4, 6, 8], default=4
     )
-    # Example: only expose band edges if filter is enabled
-    with hp.conditional_scope("butterworth_order", [2, 4, 6, 8]):
-        cfg["data"]["audio"]["butter_fmin"] = hp.Choice(
+    if cfg["data"]["audio"]["butterworth_order"] > 0:
+        cfg["data"]["augments"]["butter_fmin"] = hp.Choice(
             "butter_fmin", [100, 150, 200, 300], default=200
         )
-        # keep butter_fmax ≤ fmax and below Nyquist — tie to sample_rate buckets
-        with hp.conditional_scope("sample_rate", [16000]):
-            cfg["data"]["audio"]["butter_fmax"] = hp.Choice(
-                "butter_fmax", [6000, 7000], default=7000
+        if sr == 16000:
+            cfg["data"]["augments"]["band_high_freq"] = hp.Choice(
+                "band_high_freq", [6000, 7000, 7500], default=7000
             )
-        with hp.conditional_scope("sample_rate", [22050, 32000]):
-            cfg["data"]["audio"]["butter_fmax"] = hp.Choice(
-                "butter_fmax", [8000, 10000, 12000], default=10000
+        elif sr == 22050:
+            cfg["data"]["augments"]["band_high_freq"] = hp.Choice(
+                "band_high_freq", [8000, 10000, 11000], default=10000
+            )
+        else:  # 32000
+            cfg["data"]["augments"]["band_high_freq"] = hp.Choice(
+                "band_high_freq", [8000, 10000, 11000, 15000], default=10000
             )
 
-    # ----- Augmentations -----
-    # probabilities include 0.0 so we can gate the dependent knobs
-
+    # ----- Augmentations (define knobs only if p>0) -----
     # Loudness jitter
-    loud_p_choices = [0.0, 0.25, 0.5, 0.75]
-    cfg["data"]["augments"]["p_loud"] = hp.Choice("p_loud", loud_p_choices, default=0.0)
-    with hp.conditional_scope("p_loud", [v for v in loud_p_choices if v > 0.0]):
+    p_loud = hp.Choice("p_loud", [0.0, 0.25, 0.5, 0.75], default=0.0)
+    cfg["data"]["augments"]["p_loud"] = p_loud
+    if p_loud > 0.0:
         cfg["data"]["augments"]["loud_min_db"] = hp.Float(
             "loud_min_db", min_value=-36.0, max_value=-6.0, step=2.0, default=-26.0
         )
@@ -126,9 +125,9 @@ def hp_audio_and_aug(hp: kt.HyperParameters):
         )
 
     # Gaussian noise (SNR in dB)
-    gaus_p_choices = [0.0, 0.25, 0.5, 0.75]
-    cfg["data"]["augments"]["p_gaus"] = hp.Choice("p_gaus", gaus_p_choices, default=0.0)
-    with hp.conditional_scope("p_gaus", [v for v in gaus_p_choices if v > 0.0]):
+    p_gaus = hp.Choice("p_gaus", [0.0, 0.25, 0.5, 0.75], default=0.0)
+    cfg["data"]["augments"]["p_gaus"] = p_gaus
+    if p_gaus > 0.0:
         cfg["data"]["augments"]["gaus_snr_min"] = hp.Int(
             "gaus_snr_min", 0, 20, step=5, default=10
         )
@@ -137,9 +136,9 @@ def hp_audio_and_aug(hp: kt.HyperParameters):
         )
 
     # SpecAugment (masking only)
-    spec_p_choices = [0.0, 0.25, 0.5, 0.75]
-    cfg["data"]["augments"]["p_spec"] = hp.Choice("p_spec", spec_p_choices, default=0.5)
-    with hp.conditional_scope("p_spec", [v for v in spec_p_choices if v > 0.0]):
+    p_spec = hp.Choice("p_spec", [0.0, 0.25, 0.5, 0.75], default=0.5)
+    cfg["data"]["augments"]["p_spec"] = p_spec
+    if p_spec > 0.0:
         cfg["data"]["augments"]["freq_masks"] = hp.Int("freq_masks", 0, 2, default=1)
         cfg["data"]["augments"]["time_masks"] = hp.Int("time_masks", 0, 2, default=1)
         cfg["data"]["augments"]["spec_max_freq_width"] = hp.Int(
@@ -158,7 +157,7 @@ def hp_audio_and_aug(hp: kt.HyperParameters):
 
     # ---- PCEN ----
     cfg["data"]["audio"]["use_pcen"] = hp.Boolean("use_pcen", default=True)
-    with hp.conditional_scope("use_pcen", [True]):
+    if cfg["data"]["audio"]["use_pcen"]:
         cfg["data"]["audio"]["pcen_time_constant"] = hp.Float(
             "pcen_time_constant",
             min_value=0.20,
@@ -177,8 +176,8 @@ def hp_audio_and_aug(hp: kt.HyperParameters):
         )
         cfg["data"]["audio"]["pcen_eps"] = 1e-6
         cfg["data"]["audio"]["pcen_log1p"] = hp.Boolean("pcen_log1p", default=False)
-
-    if not cfg["data"]["audio"]["use_pcen"]:
+    else:
+        # sensible defaults so downstream code has the keys
         cfg["data"]["audio"].setdefault("pcen_time_constant", 0.40)
         cfg["data"]["audio"].setdefault("pcen_gain", 0.98)
         cfg["data"]["audio"].setdefault("pcen_bias", 2.0)
@@ -186,14 +185,11 @@ def hp_audio_and_aug(hp: kt.HyperParameters):
         cfg["data"]["audio"].setdefault("pcen_eps", 1e-6)
         cfg["data"]["audio"].setdefault("pcen_log1p", False)
 
-    # ----- Derived: number of frames for your 3 s window -----
+    # ----- Derived: number of frames for your fixed-length window -----
+    seconds = cfg["data"]["audio"]["seconds"]
     if cfg["data"]["audio"]["center"]:
-        cfg["data"]["audio"]["n_frames"] = 1 + (
-            cfg["data"]["audio"]["seconds"] * hp.get("sample_rate")
-        ) // hp.get("hop_length")
+        cfg["data"]["audio"]["n_frames"] = int(1 + (seconds * sr) // hop)
     else:
-        cfg["data"]["audio"]["n_frames"] = 1 + (
-            (cfg["data"]["audio"]["seconds"] * hp.get("sample_rate")) - hp.get("n_fft")
-        ) // hp.get("hop_length")
+        cfg["data"]["audio"]["n_frames"] = int(1 + ((seconds * sr) - nfft) // hop)
 
     return cfg

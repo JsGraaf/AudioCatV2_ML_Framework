@@ -10,66 +10,13 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
 
-from callbacks import BestF1OnVal
-from cross_validation import make_cv_splits
+from dataset_loaders import get_birdclef_datasets, get_birdset_dataset
 from init import init
-from load_birdclef import load_and_clean_birdclef
 from misc import load_config
 from models.binary_cnn import build_binary_cnn
 from models.dual_class_cnn import build_dual_class_cnn
 from models.miniresnet import build_miniresnet
 from models.tinychirp import build_cnn_mel
-from tf_datasets import build_final_dataset
-
-
-def get_birdclef_datasets(config):
-    # Load the dataset
-    logging.info(f"Loading birdclef data from {config['data']['birdclef_path']}")
-
-    birdclef_df = load_and_clean_birdclef(
-        config["data"]["birdclef_path"],
-        config["data"]["min_per_class"],
-    )
-
-    # Check that all the paths exist
-    birdclef_df.apply(
-        lambda x: print(f"Failed {x}") if not os.path.isfile(x["path"]) else {}, axis=1
-    )
-
-    # Check if the target is in the df
-    if config["exp"]["target"] not in birdclef_df["primary_label"].unique():
-        logging.error("Target Category not in df!")
-        exit(1)
-
-    # Create a dataset containing all positives and pos_neg_ratio times negatives
-    logging.info(f"Making the final dataset")
-    datasets = build_final_dataset(birdclef_df, config)
-
-    return datasets
-
-
-def get_birdset_dataset(config):
-    # Load the dataset
-    logging.info(f"Loading birdclef data from {config['data']['birdset_path']}")
-
-    birdset_df = pd.read_csv(config["data"]["birdset_path"])
-
-    # Check that all the paths exist
-    birdset_df.apply(
-        lambda x: print(f"Failed {x}") if not os.path.isfile(x["path"]) else {}, axis=1
-    )
-
-    # Check if the target is in the df
-    if config["exp"]["target"] not in birdset_df["primary_label"].unique():
-        logging.error("Target Category not in df!")
-        sys.exit(1)
-
-    # Create a dataset containing all positives and pos_neg_ratio times negatives
-    logging.info(f"Making the final dataset")
-    datasets = build_final_dataset(birdset_df, config)
-
-    return datasets
-
 
 if __name__ == "__main__":
     logging.getLogger().setLevel(logging.INFO)
@@ -119,6 +66,7 @@ if __name__ == "__main__":
                 1,
             ),
             n_classes=1,
+            loss=config["ml"]["loss"],
         )
 
     # model = build_cnn_mel(

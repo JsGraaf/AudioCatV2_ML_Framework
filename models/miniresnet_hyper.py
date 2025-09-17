@@ -2,24 +2,10 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import Model, layers
 
+from misc import hp_audio_and_aug
 
-def build_miniresnet(
-    input_shape,  # (n_mels, n_frames)
-    n_classes,
-    n_stacks=1,  # 1, 2, or 3 stacks
-    pooling="avg",  # "avg", "max", or None
-    multi_label=True,  # True -> sigmoid head, False -> softmax
-    use_garbage_class=False,  # add an extra "garbage/other" neuron
-    dropout=0.0,  # dropout rate on head
-    kernel_regularizer=None,  # e.g., tf.keras.regularizers.l2(1e-4)
-    bias_regularizer=None,
-    activity_regularizer=None,
-    name="miniresnet",
-    lr=1e-3,
-    gamma=1.0,
-    alpha=0.45,
-    loss="BCE",
-):
+
+def build_miniresnet_hyper(hp):
     """
     MiniResNet (STM32-style) for 2D time–frequency inputs.
 
@@ -28,6 +14,28 @@ def build_miniresnet(
     pooling:     "avg", "max", or None (if None => Flatten before Dense).
     multi_label: if True, uses sigmoid (multi-label); else softmax.
     """
+
+    n_classes = 1
+    multi_label = True  # True -> sigmoid head, False -> softmax
+    use_garbage_class = False  # add an extra "garbage/other" neuron
+
+    hp_cfg = hp_audio_and_aug(hp)
+
+    n_stacks = hp.Choice("stacks", [1, 2, 3])
+    pooling = hp.Choice("pooling", ["avg", "max", "None"])  # "avg", "max", or None
+
+    l2 = hp.Choice("l2", values=[1e-2, 1e-3, 1e-4, 1e-5])
+    kernel_regularizer = keras.regularizers.l2(l2)
+
+    name = "miniresnet"
+
+    input_shape = (hp.get("n_mels"), hp_cfg["data"]["audio"]["n_frames"], 1)
+
+    lr = hp.Choice("lr", values=[1e-2, 1e-3, 1e-4])
+    dropout = hp.Float("dropout", min_value=0, max_value=0.5, step=0.05)
+    gamma = hp.Int("gamma", min_value=1, max_value=4, step=1)
+    alpha = hp.Float("alpha", min_value=0.1, max_value=0.5, step=0.05)
+    loss = hp.Choice("loss", ["BCE", "FOCAL"])
 
     assert n_stacks in (1, 2, 3), "n_stacks must be 1, 2, or 3"
     if pooling == "None":
@@ -119,8 +127,6 @@ def build_miniresnet(
         out_units,
         activation=activation,
         kernel_regularizer=kernel_regularizer,
-        bias_regularizer=bias_regularizer,
-        activity_regularizer=activity_regularizer,
         name="new_head",
     )(x)
 
@@ -137,11 +143,11 @@ def build_miniresnet(
             if loss == "FOCAL"
             else keras.losses.BinaryCrossentropy(from_logits=False)
         ),
-        # loss=keras.losses.CategoricalCrossentropy(from_logits=False),
         metrics=[
-            # keras.metrics.AUC(name="pr_auc", curve="PR", class_id=1),
+            keras.metrics.AUC(name="pr_auc", curve="PR"),
             keras.metrics.Precision(name="precision"),
             keras.metrics.Recall(name="recall"),
+            keras.metrics.MeanSquaredError(name="Brier Score"),
             keras.metrics.RecallAtPrecision(precision=0.90, name="recall_at_p90"),
         ],
     )
