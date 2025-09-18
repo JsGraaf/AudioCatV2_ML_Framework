@@ -10,6 +10,7 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
 
+from callbacks import DelayedReduceLROnPlateau, LRTensorBoard
 from dataset_loaders import get_birdclef_datasets, get_birdset_dataset
 from init import init
 from misc import load_config
@@ -103,15 +104,28 @@ if __name__ == "__main__":
         verbose=1,
     )
 
+    # rlrop = DelayedReduceLROnPlateau(
+    #     monitor="val_recall_at_p90",
+    #     mode="max",
+    #     factor=0.5,
+    #     patience=5,
+    #     min_delta=0.001,
+    #     cooldown=0,
+    #     min_lr=1e-6,
+    #     verbose=1,
+    #     start_epoch=10,
+    # )
+
     rlrop = ReduceLROnPlateau(
         monitor="val_recall_at_p90",
         mode="max",
         factor=0.5,
-        patience=4,
+        patience=5,
         min_delta=0.001,
         cooldown=0,
         min_lr=1e-6,
         verbose=1,
+        start_from_epoch=10,
     )
 
     model.fit(
@@ -122,7 +136,8 @@ if __name__ == "__main__":
         ),
         validation_data=datasets["val_ds"],
         verbose=1,
-        callbacks=[early, ckpt, rlrop],
+        # callbacks=[early, ckpt, rlrop],
+        callbacks=[early, ckpt, rlrop, LRTensorBoard()],
     )
 
     results = model.evaluate(

@@ -235,6 +235,7 @@ def get_scores_per_class(df: pd.DataFrame, min_precision: float = 0.3):
     best_scores = {}
 
     # Prepare score array
+    print(df["true_label"].unique())
     for c in df["true_label"].unique():
         best_scores[c] = {
             "precision": {"t": 0, "val": -1},
@@ -242,6 +243,7 @@ def get_scores_per_class(df: pd.DataFrame, min_precision: float = 0.3):
             "f1": {"t": 0, "val": -1},
             "p90": {"t": 0, "val": -1},
         }
+    print(best_scores.keys())
     for t in np.arange(0.01, 1.0, 0.01):
         df["predicted_label"] = df["predictions"].apply(lambda x: 1 if x >= t else 0)
 
@@ -285,7 +287,7 @@ def get_scores_per_class(df: pd.DataFrame, min_precision: float = 0.3):
                 best_scores[c]["f1"]["t"] = t
                 best_scores[c]["f1"]["val"] = f1
             # Search for recall at p90
-            if p >= 0.7 and r > best_scores[c]["p90"]["val"]:
+            if p >= min_precision and r > best_scores[c]["p90"]["val"]:
                 best_scores[c]["p90"]["t"] = t
                 best_scores[c]["p90"]["val"] = r
                 best_scores[c]["p90"]["precision"] = p

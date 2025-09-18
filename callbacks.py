@@ -1,4 +1,5 @@
 import numpy as np
+import tensorflow as tf
 from sklearn import metrics
 from tensorflow import keras
 
@@ -91,3 +92,36 @@ class BestF1OnVal(keras.callbacks.Callback):
             f"(P={best_p:.3f}, R={best_r:.3f}) | R@P≥0.90 = {r_at_p90:.3f} "
             f"@ th={th_at_p90:.3f}"
         )
+
+
+class DelayedReduceLROnPlateau(tf.keras.callbacks.Callback):
+    def __init__(self, start_epoch=10, **rop_kwargs):
+        super().__init__()
+        self.start_epoch = start_epoch
+        self.rop = tf.keras.callbacks.ReduceLROnPlateau(**rop_kwargs)
+
+    # Pass model/params through
+    def set_model(self, model):
+        self.rop.set_model(model)
+
+    def set_params(self, params):
+        self.rop.set_params(params)
+
+    def on_epoch_end(self, epoch, logs=None):
+        # only start after warm-up period
+        if epoch + 1 >= self.start_epoch:
+            self.rop.on_epoch_end(epoch, logs)
+
+
+def get_lr_metric(optimizer):
+    def lr(y_true, y_pred):
+        return optimizer.lr
+
+    return lr
+
+
+class LRTensorBoard(tf.keras.callbacks.Callback):
+    def on_epoch_end(self, epoch, logs=None):
+        lr = self.model.optimizer.lr
+        print(lr)
+        # print(f"Epoch {epoch+1:03d}: learning rate = {lr:.6f}")

@@ -4,7 +4,7 @@ exp:
   target: "rucwar"
   # target: "bobfly1"
   random_state: 51
-  one_hot: True
+  one_hot: False
 
 data:
   birdclef_path: "datasets/birdclef_2021/train_metadata_birdnet.csv"

@@ -125,6 +125,7 @@ def build_miniresnet(
     )(x)
 
     model = Model(inputs=inputs, outputs=outputs, name=name)
+
     model.compile(
         optimizer=keras.optimizers.Adam(learning_rate=lr),
         loss=(

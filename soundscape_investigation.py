@@ -13,10 +13,15 @@ from pydub import AudioSegment
 from pydub.playback import play
 from scipy import signal
 
-from audio_processing_notched import audio_pipeline, generate_mel_spectrogram
+from audio_processing import audio_pipeline, generate_mel_spectrogram
+
+# from audio_processing_notched import audio_pipeline, generate_mel_spectrogram
+from dataset_loaders import get_birdclef_datasets
 from metric_utils import get_scores_per_class
 from misc import load_config
 from models.binary_cnn import build_binary_cnn
+from models.miniresnet import build_miniresnet
+from tf_datasets import make_soundscape_dataset
 
 pp = pprint.PrettyPrinter(indent=4)
 
@@ -33,7 +38,7 @@ config = load_config(CONFIG_PATH)
 if config is None:
     exit(1)
 
-# config["ml"]["batch_size"] = 1
+config["ml"]["batch_size"] = 1
 # config["data"]["audio"]["sample_rate"] = 22050
 # config["data"]["audio"]["fmin"] = 1000
 # config["data"]["audio"]["fmax"] = 22050
@@ -163,7 +168,7 @@ def get_mic_freqs_from_soundscapes(df: pd.DataFrame):
         freqs = get_median_across_time(y, sr)
 
         if len(freqs) <= 0:
-            df.loc[df["path"] == soundscape_path, "freqs"] = [None] * (
+            df.loc[df["path"] == soundscape_path, "freqs"] = [0] * (
                 df["path"] == soundscape_path
             ).sum()
             continue
@@ -175,55 +180,110 @@ def get_mic_freqs_from_soundscapes(df: pd.DataFrame):
     return df
 
 
+import librosa
+import librosa.display
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+def compare_pcen_and_logmel(row):
+    y, sr = librosa.load(
+        row["path"],
+        offset=row["start"],
+        duration=row["end"] - row["start"],
+        sr=16000,
+        mono=True,
+    )
+
+    n_fft = 1024
+    hop = 320
+    n_mels = 64
+    fmin, fmax = 500, 7500
+
+    S = librosa.feature.melspectrogram(
+        y=y,
+        sr=sr,
+        n_fft=n_fft,
+        hop_length=hop,
+        n_mels=n_mels,
+        fmin=fmin,
+        fmax=fmax,
+        power=2.0,
+    )
+
+    S_db = librosa.power_to_db(S, ref=np.max)
+    S_db = np.clip(S_db, -80.0, 0.0)
+
+    S_pcen = librosa.pcen(
+        S,
+        sr=sr,
+        hop_length=hop,
+        time_constant=0.4,
+        gain=0.98,
+        bias=2.0,
+        power=0.5,
+        eps=1e-6,
+    )
+    S_pcen01 = (S_pcen - S_pcen.min()) / (S_pcen.max() - S_pcen.min() + 1e-12)
+
+    fig, axs = plt.subplots(1, 2, figsize=(12, 4), constrained_layout=True)
+
+    im0 = librosa.display.specshow(
+        S_db,
+        sr=sr,
+        hop_length=hop,
+        x_axis="time",
+        y_axis="mel",
+        fmin=fmin,
+        fmax=fmax,
+        cmap="magma",
+        vmin=-80,
+        vmax=0,
+        ax=axs[0],
+    )
+    axs[0].set_title("Log-mel (dB, clipped −80..0)")
+    fig.colorbar(im0, ax=axs[0], pad=0.02, label="dB")
+
+    im1 = librosa.display.specshow(
+        S_pcen01,
+        sr=sr,
+        hop_length=hop,
+        x_axis="time",
+        y_axis="mel",
+        fmin=fmin,
+        fmax=fmax,
+        cmap="magma",
+        vmin=0.0,
+        vmax=1.0,
+        ax=axs[1],
+    )
+    axs[1].set_title("PCEN-mel (normalized 0–1)")
+    fig.colorbar(im1, ax=axs[1], pad=0.02, label="PCEN (norm)")
+
+    plt.show()
+
+
 # Load the soundscape predcitions
-df = pd.read_csv(os.path.join(args.input_csv, "soundscape_predictions.csv")).head(10)
+# df = pd.read_csv(os.path.join(args.input_csv, "soundscape_predictions.csv"))
 
+# compare_pcen_and_logmel(df.iloc[0])
 
-df = get_mic_freqs_from_soundscapes(df)
-
-# # Get the best thresholds
-# df["true_label"] = df["primary_label"].apply(
-#     lambda x: 1 if x == config["exp"]["target"] else 0
-# )
-# scores = get_scores_per_class(df)
-#
-# threshold = scores[1]["precision"]["t"]
-#
-# print("Using Threshold: ", threshold)
-# df["predicted_label"] = df["predicted_label"].apply(lambda x: 1 if x > threshold else 0)
-#
-# mislabeled_target = df[
-#     (df["primary_label"] == config["exp"]["target"])
-#     & (df["predicted_label"] != df["true_label"])
-# ]
-# print(mislabeled_target)
-#
-#
-# # Make sure the DF isn't empty
-# if len(mislabeled_target) == 0:
-#     raise ValueError("No mislabeled rows found.")
-#
-# paths = mislabeled_target["path"].astype(str).to_numpy()
-# starts = mislabeled_target["start"].astype(np.float32).to_numpy()
-# ends = mislabeled_target["end"].astype(np.float32).to_numpy()
-# notches = mislabeled_target["freqs"].astype(np.float32).to_numpy()
-#
-# ds_pos = (
-#     tf.data.Dataset.from_tensor_slices((paths, starts, ends, notches))
-#     .map(
-#         lambda f, s, e, n: (audio_pipeline((f, s, e, n), config), n),
-#         num_parallel_calls=tf.data.AUTOTUNE,
-#     )
-#     .prefetch(tf.data.AUTOTUNE)
-# )
+# print("Getting notch filter frequencies")
+# df = get_mic_freqs_from_soundscapes(df)
 
 # Create the TF dataset
-soundscape_ds = make_soundscape_dataset_notched(df, config)
+print("Creating Dataset!")
+soundscape_ds = get_birdclef_datasets(config)["val_ds"]
+# soundscape_ds = make_soundscape_dataset(df, config)
 
-fig, axs = plt.subplots(nrows=2, ncols=2)
+config["data"]["audio"]["use_pcen"] = True
+
+# soundscape_ds_pcen = make_soundscape_dataset(df, config)
+soundscape_ds_pcen = get_birdclef_datasets(config)["val_ds"]
+
+fig, axs = plt.subplots(nrows=4, ncols=2)
 
 for i, (x, y) in enumerate(soundscape_ds.take(4)):
-
     librosa.display.specshow(
         np.squeeze(x.numpy(), axis=0),
         x_axis="time",
@@ -232,25 +292,54 @@ for i, (x, y) in enumerate(soundscape_ds.take(4)):
         hop_length=config["data"]["audio"]["hop_length"],
         fmin=config["data"]["audio"]["fmin"],
         fmax=config["data"]["audio"]["fmax"],
-        ax=axs[int(i % 2)][int(i / 2)],
+        ax=axs[i][0],
         cmap="magma",
         vmin=0,
         vmax=1,
     )
+
+for i, (x, y) in enumerate(soundscape_ds_pcen.take(4)):
+    librosa.display.specshow(
+        np.squeeze(x.numpy(), axis=0),
+        x_axis="time",
+        y_axis="mel",
+        sr=config["data"]["audio"]["sample_rate"],
+        hop_length=config["data"]["audio"]["hop_length"],
+        fmin=config["data"]["audio"]["fmin"],
+        fmax=config["data"]["audio"]["fmax"],
+        ax=axs[i][1],
+        cmap="magma",
+        vmin=0,
+        vmax=1,
+    )
+
 plt.show()
+
+exit(1)
 
 
 # Load the model
-model = build_binary_cnn(
+# model = build_binary_cnn(
+#     input_shape=(
+#         config["data"]["audio"]["n_mels"],
+#         config["data"]["audio"]["n_frames"],
+#         1,
+#     )
+# )
+
+model = build_miniresnet(
     input_shape=(
         config["data"]["audio"]["n_mels"],
         config["data"]["audio"]["n_frames"],
         1,
-    )
+    ),
+    n_classes=1,
 )
 
 # Load the weights
 model.load_weights(os.path.join(args.input_csv, "full_training_model.keras"))
+
+print("Predicting!")
 
 predictions = model.predict(soundscape_ds).ravel()
 
@@ -258,10 +347,12 @@ df["predictions"] = predictions
 
 print(df["predictions"])
 
-
 df["true_label"] = df["primary_label"].apply(
     lambda x: 1 if x == config["exp"]["target"] else 0
 )
+
+print(df["true_label"].value_counts())
+
 
 pp.pprint(get_scores_per_class(df))
 

@@ -37,7 +37,6 @@ def generate_mel_spectrogram(
     pcen_bias,
     pcen_power,
     pcen_eps,
-    pcen_log1p,
 ):
     # Generate mel spectrogram
     spec = librosa.feature.melspectrogram(
@@ -59,10 +58,25 @@ def generate_mel_spectrogram(
             else (norm if isinstance(norm, str) else norm.decode("utf-8"))
         ),
     )
-    # Convert to dB
-    if not use_pcen:
-        return librosa.power_to_db(spec, ref=np.max)
 
+    if not use_pcen:
+        # --------- LOG-MEL ----------
+        spec_db = librosa.power_to_db(spec, ref=np.max)  # dB ~[-80,0]
+
+        # Per-frequency background (robust): median over time
+        bg_db = np.median(spec_db, axis=1, keepdims=True)
+        spec_rel = spec_db - bg_db  # center around 0 dB
+
+        # Symmetric window around 0 — tune if needed
+        lo, hi = -30.0, +15.0
+        spec_rel = np.clip(spec_rel, lo, hi)
+
+        # Map to [0,1]
+        spec_01 = (spec_rel - lo) / (hi - lo)
+
+        return spec_01.astype(np.float32)
+
+    # librosa.pcen expects POWER mel
     spec_pcen = librosa.pcen(
         spec,
         sr=int(sr),
@@ -73,10 +87,6 @@ def generate_mel_spectrogram(
         power=float(pcen_power),
         eps=float(pcen_eps),
     ).astype(np.float32)
-
-    if pcen_log1p:
-        # Optional extra compression (usually unnecessary)
-        spec_pcen = np.log1p(spec_pcen).astype(np.float32)
 
     return spec_pcen
 
@@ -199,7 +209,6 @@ def audio_pipeline(
             audio_config["pcen_bias"],
             audio_config["pcen_power"],
             audio_config["pcen_eps"],
-            audio_config["pcen_log1p"],
         ],
         Tout=tf.float32,
     )

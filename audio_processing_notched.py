@@ -181,24 +181,12 @@ def audio_pipeline(
         signal.lfilter, [b, a, processed], Tout=tf.float32, name="Filter"
     )
 
-    # Notch filter
-    notch_filter = tf.py_function(
-        notch_lines,
-        [
-            band_filter,
-            config["data"]["audio"]["sample_rate"],
-            tf.cast(file_info[3], tf.float64),
-            tf.cast(config["data"]["augments"]["notch_width"], tf.float32),
-        ],
-        Tout=tf.float32,
-    )
-
     audio_config = config["data"]["audio"]
 
     db_mel_spectrogram = tf.numpy_function(
         generate_mel_spectrogram,
         [
-            notch_filter,
+            band_filter,
             audio_config["sample_rate"],
             audio_config["n_fft"],
             audio_config["n_mels"],
