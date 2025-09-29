@@ -1,31 +1,36 @@
 #!/usr/bin/env python3
 """
-Convert a .keras model into STM32-friendly artifacts:
-- SavedModel (clean)
-- TFLite FP32
-- TFLite dynamic-range quant
-- TFLite full-integer (int8) quant (with representative dataset)
-- Optional C header with int8 model bytes
+Export a model to INT8 TFLite using a representative dataset sampled
+BALANCED across species folders:
 
-Default dirs: input/ (model, optional audio) and output/ (artifacts).
+data_root/
+  Species_A/
+    a.ogg b.wav ...
+  Species_B/
+    c.flac ...
+
+Usage example:
+  python3 export_int8_from_species.py \
+    --model input/model.keras \
+    --data_root datasets/custom_set/xc_dataset \
+    --per_species 40 \
+    --output_dir tflite_out \
+    --sr 16000 \
+    --emit_header
 """
 
 import argparse
-import json
 import os
 import pathlib
-import struct
 import sys
 from typing import Iterable, List, Optional, Tuple
 
 import numpy as np
 import tensorflow as tf
 
-# Works with TF 2.12–2.16+. If you use a much older TF, adjust converter flags accordingly.
+AUDIO_EXTS = {".wav", ".ogg", ".flac", ".mp3", ".m4a", ".aac", ".wma"}
 
-# ---------------------------
-# Utilities
-# ---------------------------
+# ───────────── Utils ─────────────
 
 
 def human_size(nbytes: int) -> str:
@@ -48,14 +53,12 @@ def save_bytes(p: pathlib.Path, data: bytes):
 def bytes_to_c_header(
     data: bytes, var_name: str, out_path: pathlib.Path, align: int = 8
 ):
-    """Emit a C header containing the model as a const unsigned char array."""
     lines = []
     lines.append("// Auto-generated. Embed this in your STM32 firmware.\n")
     lines.append("#pragma once\n#include <stdint.h>\n")
     lines.append(f"#define {var_name.upper()}_LEN ({len(data)})\n")
     lines.append(f"#ifdef __GNUC__\n__attribute__((aligned({align})))\n#endif\n")
     lines.append(f"const unsigned char {var_name}[] = {{\n")
-    # format as 12 bytes per line
     for i in range(0, len(data), 12):
         chunk = data[i : i + 12]
         lines.append("  " + ", ".join(f"0x{b:02x}" for b in chunk) + ",\n")
@@ -68,314 +71,307 @@ def list_tflite_ops(tflite_model: bytes) -> List[str]:
     try:
         interp = tf.lite.Interpreter(model_content=tflite_model)
         interp.allocate_tensors()
-        ops = set()
-        for d in interp._get_ops_details():  # type: ignore (private, but stable)
-            ops.add(d.get("op_name", "?"))
+        ops = {d.get("op_name", "?") for d in interp._get_ops_details()}  # type: ignore
         return sorted(ops)
     except Exception:
         return []
 
 
-def guess_input_signature(
-    keras_model: tf.keras.Model,
+def is_savedmodel_dir(p: pathlib.Path) -> bool:
+    return p.is_dir() and (p / "saved_model.pb").exists()
+
+
+def guess_input_signature_keras(
+    model: tf.keras.Model,
 ) -> Tuple[Tuple[int, ...], tf.dtypes.DType]:
-    """Return (shape, dtype) for the first input (batch dimension left as None)."""
-    if isinstance(keras_model.inputs, (list, tuple)):
-        x = keras_model.inputs[0]
-    else:
-        x = keras_model.inputs
+    x = model.inputs[0] if isinstance(model.inputs, (list, tuple)) else model.inputs
     shape = tuple([None] + list(x.shape.as_list()[1:]))
     dtype = x.dtype
     return shape, dtype
 
 
-# ---------------------------
-# Representative dataset
-# ---------------------------
+# ───────────── Species data helpers ─────────────
 
 
-def audio_file_iter(
-    audio_dir: pathlib.Path, exts=(".wav", ".ogg", ".flac", ".mp3")
-) -> Iterable[pathlib.Path]:
-    if not audio_dir.exists():
-        return []
-    for p in sorted(audio_dir.rglob("*")):
-        if p.suffix.lower() in exts:
-            yield p
+def find_species_dirs(root: pathlib.Path) -> List[pathlib.Path]:
+    return [p for p in sorted(root.iterdir()) if p.is_dir()]
 
 
-def make_rep_generator_from_audio(
-    audio_dir: pathlib.Path,
+def list_audio_files(d: pathlib.Path) -> List[pathlib.Path]:
+    return [
+        p
+        for p in sorted(d.rglob("*"))
+        if p.is_file() and p.suffix.lower() in AUDIO_EXTS
+    ]
+
+
+def balanced_sample_across_species(
+    data_root: pathlib.Path, per_species: int, seed: int = 42
+) -> List[pathlib.Path]:
+    import random
+
+    rng = random.Random(seed)
+    selected: List[pathlib.Path] = []
+    for sp_dir in find_species_dirs(data_root):
+        files = list_audio_files(sp_dir)
+        if not files:
+            continue
+        rng.shuffle(files)
+        selected.extend(files[:per_species])
+    if not selected:
+        raise SystemExit(f"No audio found under {data_root}")
+    return selected
+
+
+# ───────────── Representative dataset ─────────────
+
+
+def make_rep_from_species_dirs(
+    data_root: pathlib.Path,
     input_shape: Tuple[int, ...],
-    sample_rate: int = 16000,
-    n_examples: int = 256,
+    sample_rate: int,
+    per_species: int,
+    seed: int = 42,
 ):
     """
-    Create a TFLite representative dataset generator using real audio.
-    Assumes model expects either raw audio [batch, time] or features [batch, H, W, C].
-    If features are expected, we just pass the raw-resized waveform; your model's
-    own preprocessing (e.g., a tf layer) should handle transforms.
+    Build a representative dataset generator using balanced sampling from species folders.
+    For 1-D audio inputs ([T] or [T,1]), crops/pads waveform to T.
+    For feature-shaped inputs (e.g., [H,W,C]) without preprocessing layers inside the model,
+    calibration still proceeds but may be less accurate (random normal fallback).
     """
     try:
         import librosa
     except Exception as e:
-        print(
-            f"[rep] librosa not available ({e}); falling back to synthetic calibration."
-        )
+        print(f"[rep] librosa not available ({e}); using synthetic reps.")
         return None
 
-    # Deduce per-sample data shape excluding batch
     per_sample = input_shape[1:]
-    # Flatten time length if 1D audio
+    # detect 1-D audio shapes
     target_len = None
+    is_1d = False
     if len(per_sample) == 1:
-        target_len = per_sample[0]
-    elif len(per_sample) == 2:
-        # e.g., [time, 1]
-        target_len = per_sample[0]
-    else:
-        # feature-like input (e.g., [H, W, C]); we'll just feed random if no preprocessing layer
-        pass
+        target_len = int(per_sample[0])
+        is_1d = True
+    elif len(per_sample) == 2 and per_sample[1] == 1:
+        target_len = int(per_sample[0])
+        is_1d = True
 
-    files = list(audio_file_iter(audio_dir))
-    if not files:
-        print(f"[rep] No audio files found in {audio_dir}.")
-        return None
+    files = balanced_sample_across_species(data_root, per_species, seed=seed)
 
     def _gen():
-        cnt = 0
+        import random
+
+        rng = random.Random(seed)
+        rng.shuffle(files)
         for p in files:
-            if cnt >= n_examples:
-                break
             try:
-                y, sr = librosa.load(str(p), sr=sample_rate, mono=True)
-                if target_len is not None:
-                    if len(y) < target_len:
-                        y = np.pad(y, (0, target_len - len(y)), mode="constant")
+                if is_1d and target_len is not None:
+                    y, sr = librosa.load(str(p), sr=sample_rate, mono=True)
+                    if len(y) >= target_len:
+                        off = (
+                            0
+                            if len(y) == target_len
+                            else rng.randint(0, len(y) - target_len)
+                        )
+                        y = y[off : off + target_len]
                     else:
-                        y = y[:target_len]
-                    # Shape to model input (add channel dim if needed)
+                        y = np.pad(y, (0, target_len - len(y)), mode="constant")
                     if len(per_sample) == 1:
                         sample = y.astype(np.float32)[None, :]  # [1, T]
-                    elif len(per_sample) == 2 and per_sample[1] == 1:
-                        sample = y.astype(np.float32)[None, :, None]  # [1, T, 1]
                     else:
-                        sample = y.astype(np.float32)[None, :]  # best effort
+                        sample = y.astype(np.float32)[None, :, None]  # [1, T, 1]
                 else:
-                    # For feature-shaped inputs, hope the model includes preprocessing.
-                    sample = np.random.normal(size=(1,) + per_sample).astype(np.float32)
-
+                    # Feature-shaped fallback (encourage adding preproc layers in Keras for best results)
+                    sample = (
+                        np.random.normal(size=(1,) + per_sample).astype(np.float32)
+                        * 0.2
+                    )
                 yield [sample]
-                cnt += 1
             except Exception as e:
                 print(f"[rep] skip {p.name}: {e}")
                 continue
-        # If we provided fewer than requested, still OK.
 
     return _gen
 
 
-def make_rep_generator_synthetic(input_shape: Tuple[int, ...], n_examples: int = 256):
+def make_rep_synthetic(input_shape: Tuple[int, ...], n_examples: int = 512):
     per_sample = input_shape[1:]
     rng = np.random.default_rng(123)
 
     def _gen():
         for _ in range(n_examples):
-            sample = rng.normal(size=(1,) + per_sample).astype(np.float32) * 0.2
-            yield [sample]
+            yield [rng.normal(size=(1,) + per_sample).astype(np.float32) * 0.2]
 
     return _gen
 
 
-# ---------------------------
-# Converters
-# ---------------------------
+# ───────────── INT8 conversion ─────────────
 
 
-def convert_to_tflite(
-    model: tf.keras.Model,
-    rep_gen: Optional[callable],
+def convert_to_int8(
+    keras_or_savedmodel: pathlib.Path,
+    rep_gen,
     out_dir: pathlib.Path,
-    int8_only: bool = True,
-    name_prefix: str = "model",
-):
-    out_dir.mkdir(parents=True, exist_ok=True)
+    name_prefix: str,
+) -> bytes:
+    if is_savedmodel_dir(keras_or_savedmodel):
+        conv = tf.lite.TFLiteConverter.from_saved_model(str(keras_or_savedmodel))
+    else:
+        model = tf.keras.models.load_model(str(keras_or_savedmodel), compile=False)
+        conv = tf.lite.TFLiteConverter.from_keras_model(model)
 
-    # 1) Save a clean SavedModel (good for STM32 tools that accept TF models)
-    savedmodel_dir = out_dir / f"{name_prefix}_savedmodel"
-    if savedmodel_dir.exists():
-        # overwrite cleanly
-        import shutil
-
-        shutil.rmtree(savedmodel_dir)
-    tf.saved_model.save(model, str(savedmodel_dir))
-    print(f"[ok] SavedModel → {savedmodel_dir}")
-
-    # 2) TFLite float32
-    conv = tf.lite.TFLiteConverter.from_keras_model(model)
-    conv.optimizations = []  # no PTQ
-    fp32 = conv.convert()
-    save_bytes(out_dir / f"{name_prefix}_fp32.tflite", fp32)
-    print(f"[ok] TFLite FP32: {human_size(len(fp32))}  ops={list_tflite_ops(fp32)}")
-
-    # 3) TFLite dynamic-range quant (weights quantized; activations float)
-    conv = tf.lite.TFLiteConverter.from_keras_model(model)
-    conv.optimizations = [tf.lite.Optimize.DEFAULT]
-    # Keep default supported_ops set; no rep dataset needed
-    drq = conv.convert()
-    save_bytes(out_dir / f"{name_prefix}_drq.tflite", drq)
-    print(
-        f"[ok] TFLite Dynamic-Range: {human_size(len(drq))}  ops={list_tflite_ops(drq)}"
-    )
-
-    # 4) TFLite full integer (int8) with rep dataset
-    conv = tf.lite.TFLiteConverter.from_keras_model(model)
     conv.optimizations = [tf.lite.Optimize.DEFAULT]
     if rep_gen is not None:
         conv.representative_dataset = rep_gen
+        print("[rep] Using representative dataset.")
     else:
-        print(
-            "[warn] No representative dataset provided; full INT8 calibration may be poor."
-        )
+        print("[rep][warn] No representative dataset; calibration may be poor.")
 
-    if int8_only:
-        conv.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
-        conv.inference_input_type = tf.int8
-        conv.inference_output_type = tf.int8
-    else:
-        # Allow fallback to float if an op lacks int8 kernel (larger model).
-        conv.target_spec.supported_ops = [
-            tf.lite.OpsSet.TFLITE_BUILTINS_INT8,
-            tf.lite.OpsSet.TFLITE_BUILTINS,
-        ]
-        conv.inference_input_type = tf.int8
-        conv.inference_output_type = tf.int8
+    conv.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+    conv.inference_input_type = tf.int8
+    conv.inference_output_type = tf.float32
 
-    int8 = conv.convert()
-    save_bytes(out_dir / f"{name_prefix}_int8.tflite", int8)
-    print(f"[ok] TFLite INT8: {human_size(len(int8))}  ops={list_tflite_ops(int8)}")
-
-    return fp32, drq, int8, savedmodel_dir
+    tfl = conv.convert()
+    out_path = out_dir / f"{name_prefix}_int8.tflite"
+    save_bytes(out_path, tfl)
+    print(
+        f"[ok] INT8 saved: {out_path}  size={human_size(len(tfl))}  ops={list_tflite_ops(tfl)}"
+    )
+    return tfl
 
 
-def quick_int8_smoketest(tflite_bytes: bytes, input_shape: Tuple[int, ...]):
+def quick_smoketest_int8(tflite_bytes: bytes):
     try:
         interp = tf.lite.Interpreter(model_content=tflite_bytes)
         interp.allocate_tensors()
         iinfo = interp.get_input_details()[0]
-        ominfo = interp.get_output_details()[0]
-        # Create a zero-ish sample with proper quantization scaling
-        scale, zp = iinfo["quantization"]
-        if scale == 0:
-            x = np.zeros(iinfo["shape"], dtype=np.int8)
-        else:
-            x = np.clip(np.round(0.0 / scale + zp), -128, 127).astype(
-                np.int8
-            ) * np.ones(iinfo["shape"], dtype=np.int8)
+        oinfo = interp.get_output_details()[0]
+        sc, zp = iinfo["quantization"]
+        q0 = int(np.clip(np.round(0.0 / (sc or 1.0) + zp), -128, 127))
+        x = np.ones(iinfo["shape"], dtype=np.int8) * q0
         interp.set_tensor(iinfo["index"], x)
         interp.invoke()
-        y = interp.get_tensor(ominfo["index"])
-        print(f"[ok] INT8 smoketest ran. Output shape: {y.shape}, dtype: {y.dtype}")
+        y = interp.get_tensor(oinfo["index"])
+        print(f"[smoke] ok. out shape={y.shape}, dtype={y.dtype}")
     except Exception as e:
-        print(f"[warn] INT8 smoketest failed: {e}")
+        print(f"[smoke][warn] failed: {e}")
 
 
-# ---------------------------
-# Main
-# ---------------------------
+# ───────────── Main ─────────────
 
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Quantize & export a .keras model for STM32"
+        description="INT8 TFLite converter with species/audio representative dataset."
     )
     ap.add_argument(
-        "--model", type=str, default="input/model.keras", help=".keras model path"
+        "--model",
+        required=True,
+        help="Path to .keras/.h5 model OR a SavedModel directory (contains saved_model.pb)",
     )
     ap.add_argument(
-        "--output_dir", type=str, default="tflite_output", help="Output directory"
+        "--data_root",
+        required=True,
+        help="Root folder containing species subfolders with audio (e.g., datasets/custom_set/xc_dataset)",
     )
     ap.add_argument(
-        "--rep_data_dir",
-        type=str,
-        default="input/rep_audio",
-        help="Directory with audio for calibration (optional)",
+        "--per_species",
+        type=int,
+        default=100,
+        help="Number of audio files to sample per species (balanced).",
     )
     ap.add_argument(
-        "--n_calib", type=int, default=256, help="Number of calibration examples"
+        "--sr",
+        type=int,
+        default=32000,
+        help="Sample rate for loading audio during calibration.",
     )
     ap.add_argument(
-        "--sr", type=int, default=16000, help="Sample rate for audio calibration"
+        "--seed", type=int, default=42, help="Random seed for sampling/crops."
     )
     ap.add_argument(
-        "--int8_only",
-        action="store_true",
-        help="Force all ops to int8 (best for MCUs).",
+        "--output_dir", type=str, default="tflite_out", help="Output directory."
     )
     ap.add_argument(
         "--emit_header",
         action="store_true",
-        help="Emit a C header with the INT8 model bytes",
+        help="Emit a C header with INT8 model bytes.",
     )
     ap.add_argument(
         "--header_var",
         type=str,
         default="g_model_int8",
-        help="Variable name in the C header",
+        help="C variable name in header.",
     )
     args = ap.parse_args()
 
     model_path = pathlib.Path(args.model)
+    data_root = pathlib.Path(args.data_root)
     out_dir = pathlib.Path(args.output_dir)
     ensure_dir(out_dir)
 
     if not model_path.exists():
         print(f"ERROR: model not found: {model_path}")
         sys.exit(1)
+    if not data_root.exists():
+        print(f"ERROR: data_root not found: {data_root}")
+        sys.exit(1)
 
-    print(f"[load] {model_path}")
-    model = tf.keras.models.load_model(str(model_path), compile=False)
-    in_shape, in_dtype = guess_input_signature(model)
-    print(f"[model] input_shape={in_shape}, dtype={in_dtype.name}")
+    # Try to load Keras to infer input shape (best case). If SavedModel only, try Keras load; else fallback.
+    input_shape = None
+    if is_savedmodel_dir(model_path):
+        try:
+            km = tf.keras.models.load_model(str(model_path), compile=False)
+            input_shape, _ = guess_input_signature_keras(km)
+        except Exception as e:
+            print(f"[info] SavedModel loaded without Keras inference: {e}")
+    else:
+        km = tf.keras.models.load_model(str(model_path), compile=False)
+        print(km.summary())
+        print(km.layers[-1].name, km.layers[-1].activation)  # should be 'linear'
+        input_shape, _ = guess_input_signature_keras(km)
 
-    # Representative dataset
-    rep_dir = pathlib.Path(args.rep_data_dir)
-    rep_gen = make_rep_generator_from_audio(rep_dir, in_shape, args.sr, args.n_calib)
-    if rep_gen is None:
-        rep_gen = make_rep_generator_synthetic(in_shape, args.n_calib)
+    # Build rep dataset generator from species folders
+    if input_shape is not None:
+        rep_gen = make_rep_from_species_dirs(
+            data_root=data_root,
+            input_shape=input_shape,
+            sample_rate=args.sr,
+            per_species=args.per_species,
+            seed=args.seed,
+        )
+        if rep_gen is None:
+            print("[rep] Falling back to synthetic representative dataset.")
+            rep_gen = make_rep_synthetic(
+                input_shape, n_examples=max(256, args.per_species)
+            )
+    else:
+        # Conservative fallback if we couldn't infer shape
+        print(
+            "[rep][warn] Could not infer input shape; falling back to (None,16000,1)."
+        )
+        input_shape = (None, 16000, 1)
+        rep_gen = make_rep_synthetic(input_shape, n_examples=max(256, args.per_species))
 
     # Convert
-    fp32, drq, int8, savedmodel_dir = convert_to_tflite(
-        model=model,
-        rep_gen=rep_gen,
-        out_dir=out_dir,
-        int8_only=args.int8_only,
-        name_prefix=model_path.stem,
-    )
+    name_prefix = model_path.stem if model_path.is_file() else model_path.name
+    tfl = convert_to_int8(model_path, rep_gen, out_dir, name_prefix)
 
-    # Smoketest INT8
-    quick_int8_smoketest(int8, in_shape)
+    # Smoketest
+    quick_smoketest_int8(tfl)
 
-    # Emit header
+    # Optional header
     if args.emit_header:
-        hpath = out_dir / f"{model_path.stem}_int8_model.h"
-        bytes_to_c_header(int8, args.header_var, hpath)
-        print(f"[ok] C header emitted: {hpath}")
+        hpath = out_dir / f"{name_prefix}_int8_model.h"
+        bytes_to_c_header(tfl, args.header_var, hpath)
+        print(f"[ok] Header: {hpath}")
 
-    # Summary
     print("\n== Summary ==")
-    print(f"SavedModel: {savedmodel_dir}")
     print(
-        f"FP32 TFLite: {out_dir / (model_path.stem + '_fp32.tflite')}  ({human_size(len(fp32))})"
-    )
-    print(
-        f"DRQ  TFLite: {out_dir / (model_path.stem + '_drq.tflite')}   ({human_size(len(drq))})"
-    )
-    print(
-        f"INT8 TFLite: {out_dir / (model_path.stem + '_int8.tflite')}  ({human_size(len(int8))})"
+        f"INT8 TFLite: {out_dir / (name_prefix + '_int8.tflite')} ({human_size(len(tfl))})"
     )
     if args.emit_header:
-        print(f"C Header:   {out_dir / (model_path.stem + '_int8_model.h')}")
+        print(f"C Header:   {out_dir / (name_prefix + '_int8_model.h')}")
     print("Done.")
 
 

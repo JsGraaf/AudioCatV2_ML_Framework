@@ -91,7 +91,7 @@ if __name__ == "__main__":
     pp = pprint.PrettyPrinter(indent=4)
     logging.getLogger().setLevel(logging.INFO)
     # Load the config
-    CONFIG_PATH = Path("config.yaml")
+    CONFIG_PATH = Path("config_tflite.yaml")
     logging.info(f"Loading config from {CONFIG_PATH}")
     config = load_config(CONFIG_PATH)
 
@@ -110,7 +110,7 @@ if __name__ == "__main__":
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
 
-    if config["data"]["use_birdset"]:
+    if config["data"]["use_dataset"] == "birdset":
         soundscapes_df, soundscape_ds = get_birdset_soundscapes(config)
     else:
         soundscapes_df, soundscape_ds = get_birdclef_soundscapes(config)
@@ -131,17 +131,39 @@ if __name__ == "__main__":
             fmax=config["data"]["audio"]["fmax"],
         )
 
-        plt.show()
+        # plt.show()
 
         i = interpreter.get_input_details()[0]
         interpreter.set_tensor(i["index"], np.asarray(x)[..., None].astype(np.float32))
         buf = interpreter.get_tensor(i["index"])  # view copy
 
         interpreter.invoke()
+        # Prepare input
+        i = input_details[0]
+        in_dtype = i["dtype"]
+        in_data = np.asarray(x)[..., None].astype(in_dtype)
+
+        # Set tensor
+        interpreter.set_tensor(i["index"], in_data)
+
+        # Print as C array
+        flat = in_data.flatten()
+
+        print("\n// C array dump of input tensor")
+        print(f"const {np.dtype(in_dtype).name} input_data[{flat.size}] = {{")
+        for j, val in enumerate(flat):
+            if np.issubdtype(in_dtype, np.floating):
+                print(f"  {val:.6f}f,", end="")
+            else:
+                print(f"  {int(val)},", end="")
+
+            if (j + 1) % 16 == 0:  # wrap lines every 16 elements
+                print()
+        print("};\n")
 
         output_data = interpreter.get_tensor(output_details[0]["index"])
 
-        print(output_data, y)
+        print(y)
 
     #
     # # Load the model

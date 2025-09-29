@@ -2,7 +2,6 @@ exp:
   name: "Testing"
   # target: "rocwre"
   target: "Pica pica"
-  # target: "rucwar"
   # target: "bobfly1"
   random_state: 51
   one_hot: False
@@ -63,7 +62,6 @@ ml:
   batch_size: 32
   epochs_per_fold: 100
   model_path: "output/full_training_model.keras"
-  tflite_model_path: "tflite_models/Pica_pica/tflite_models/full_training_model_int8.tflite"
   loss: "FOCAL" # "FOCAL" | "BCE"
   mixup:
     enabled: true

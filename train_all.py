@@ -11,12 +11,18 @@ from tensorflow import keras
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
 
 from callbacks import DelayedReduceLROnPlateau, LRTensorBoard
-from dataset_loaders import get_birdclef_datasets, get_birdset_dataset
+from dataset_loaders import (
+    get_birdclef_datasets,
+    get_birdset_dataset,
+    get_custom_dataset,
+)
 from init import init
 from misc import load_config
 from models.binary_cnn import build_binary_cnn
 from models.dual_class_cnn import build_dual_class_cnn
-from models.miniresnet import build_miniresnet
+
+# from models.miniresnet import build_miniresnet
+from models.miniresnet_logits import build_miniresnet
 from models.tinychirp import build_cnn_mel
 
 if __name__ == "__main__":
@@ -36,12 +42,15 @@ if __name__ == "__main__":
     # Initialize the framework
     init(config["exp"]["random_state"])
 
-    if config["data"]["use_birdset"]:
+    if config["data"]["use_dataset"] == "birdset":
         logging.info("[Info] Loading birdset!")
         datasets = get_birdset_dataset(config)
-    else:
+    elif config["data"]["use_dataset"] == "birdclef":
         logging.info("[Info] Loading Birdclef")
         datasets = get_birdclef_datasets(config)
+    else:
+        logging.info("[Info] Loading custom Dataset")
+        datasets = get_custom_dataset(config)
 
     # Train the model
     if config["exp"]["one_hot"]:
@@ -68,7 +77,17 @@ if __name__ == "__main__":
             ),
             n_classes=1,
             loss=config["ml"]["loss"],
+            logits=True,
         )
+        # model = build_miniresnet(
+        #     input_shape=(
+        #         config["data"]["audio"]["n_mels"],
+        #         config["data"]["audio"]["n_frames"],
+        #         1,
+        #     ),
+        #     n_classes=1,
+        #     loss=config["ml"]["loss"],
+        # )
 
     # model = build_cnn_mel(
     #     input_shape=(
