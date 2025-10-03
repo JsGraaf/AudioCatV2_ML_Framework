@@ -1,17 +1,14 @@
 import logging
-import os
-from typing import Dict
 
 import keras_tuner as kt
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-import tensorflow as tf
 import yaml
-from tensorflow import keras
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+from keras.callbacks import EarlyStopping, ModelCheckpoint
 
-from dataset_loaders import get_birdclef_datasets, get_birdset_dataset
+from dataset_loaders import (
+    get_birdclef_datasets,
+    get_birdset_dataset,
+    get_custom_dataset,
+)
 from init import init
 from misc import hp_audio_and_aug, load_config
 from models.binary_cnn_hyper import model_builder
@@ -24,12 +21,15 @@ class DataAwareHyperband(kt.Hyperband):
 
         hp_cfg = hp_audio_and_aug(hp)
 
-        if hp_cfg["data"]["use_birdset"]:
+        if hp_cfg["data"]["use_dataset"] == "birdset":
             logging.info("[Info] Loading birdset!")
             datasets = get_birdset_dataset(hp_cfg)
-        else:
+        elif hp_cfg["data"]["use_dataset"] == "birdclef":
             logging.info("[Info] Loading Birdclef")
             datasets = get_birdclef_datasets(hp_cfg)
+        else:
+            logging.info("[Info] Loading custom Dataset")
+            datasets = get_custom_dataset(hp_cfg, percentage=0.1)
 
         early = EarlyStopping(
             monitor="val_recall_at_p90",
@@ -80,7 +80,7 @@ if __name__ == "__main__":
         factor=3,
         seed=config["exp"]["random_state"],
         directory="my_dir",
-        project_name="miniresnet",
+        project_name="miniresnet_final",
     )
 
     tuner.search()

@@ -1,4 +1,5 @@
 import argparse
+import glob
 import os
 import pprint
 from pathlib import Path
@@ -6,8 +7,11 @@ from typing import Dict
 
 import librosa
 import numpy as np
+import pandas as pd
 import tensorflow as tf
 from birdnet.audio_based_prediction import predict_species_within_audio_file
+from birdnet.audio_based_prediction_mp import predict_species_within_audio_files_mp
+from tqdm import tqdm
 
 from audio_processing import generate_mel_spectrogram
 from misc import load_config
@@ -16,20 +20,6 @@ from misc import load_config
 from models.miniresnet import build_miniresnet
 
 pp = pprint.PrettyPrinter(indent=4)
-
-
-def split_audio(y, sr, chunk_sec):
-    chunk_len = int(chunk_sec * sr)
-    n_chunks = int(np.ceil(len(y) / chunk_len))
-    chunks = []
-    for i in range(n_chunks):
-        start = i * chunk_len
-        end = min((i + 1) * chunk_len, len(y))
-        y_chunk = y[start:end]
-        if len(y_chunk) < chunk_len:
-            y_chunk = np.pad(y_chunk, (0, chunk_len - len(y_chunk)))
-        chunks.append((y_chunk, start / sr, end / sr))
-    return chunks
 
 
 def load_tflite_model(path: Path):
@@ -50,7 +40,7 @@ def load_tflite_model(path: Path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("input_file")
+    parser.add_argument("input_dir")
     parser.add_argument("--model_path", required=True)
     args = parser.parse_args()
 
@@ -94,28 +84,46 @@ def main():
         tfl_interpreter = load_tflite_model(Path(tfl_path))
         tfl_in = tfl_interpreter.get_input_details()[0]
         tfl_out = tfl_interpreter.get_output_details()[0]
-        tfl_in_dtype = tfl_in["dtype"]
-        tfl_scale, tfl_zp = tfl_in.get("quantization", (0.0, 0))
     except Exception as e:
         print(f"[TFLite] Disabled: {e}")
         tfl_interpreter = None
         tfl_in = tfl_out = None
 
-    # Load audio
-    y, sr = librosa.load(args.input_file, sr=config["data"]["audio"]["sample_rate"])
-
     # BirdNET for comparison (best-effort: ignore errors)
     try:
-        birdnet_results = list(predict_species_within_audio_file(Path(args.input_file)))
+        birdnet_results = list(
+            predict_species_within_audio_files_mp(
+                [
+                    Path(x)
+                    for x in glob.glob(
+                        args.input_dir + "*.wav",
+                    )
+                ]
+            )
+        )
     except Exception as e:
         print(f"[BirdNET] Warning: {e}")
         birdnet_results = []
 
+    # Convert into dict
+    birdnet_dict = {}
+    for x in birdnet_results:
+        birdnet_dict[str(x[0]).rsplit("/", maxsplit=1)[-1]] = list(x[1].items())[0]
+
+    def read_files(path):
+        chunks = []
+        for f in glob.glob(path + "*.wav"):
+            y, _ = librosa.load(f)
+            chunks.append((f.split("/")[-1], y))
+        return chunks
+
     # Chunks
-    chunks = split_audio(y, sr, config["data"]["audio"]["seconds"])
+    chunks = read_files(args.input_dir)
 
     results = []
-    for i_chunk, (y_chunk, t0, t1) in enumerate(chunks):
+    for name, y_chunk in tqdm(
+        chunks, total=len(chunks), desc="Processing", unit="chunk"
+    ):
         # Make mel
         spec = generate_mel_spectrogram(
             audio=y_chunk,
@@ -169,8 +177,6 @@ def main():
         tflite_prob = None
 
         if tfl_interpreter is not None:
-            # Prepare input for TFLite
-
             # Run
             tfl_interpreter.set_tensor(tfl_in["index"], x_keras)
             tfl_interpreter.invoke()
@@ -181,22 +187,32 @@ def main():
         # Assemble result row
         results.append(
             {
-                "chunk": i_chunk,
-                "t0": t0,
-                "t1": t1,
+                "name": name,
                 "keras_prob": prob_keras,
                 "tflite_prob": tflite_prob,
-                "birdnet": (
-                    birdnet_results[i_chunk] if i_chunk < len(birdnet_results) else None
-                ),
+                "birdnet": (birdnet_dict[name]),
             }
         )
 
-    for r in results:
-        print(f"BirdNET: {r['birdnet']}")
-        print(f"Keras: {r['keras_prob']}")
-        print(f"TFLite: {r['tflite_prob']}")
-        print("\n\n")
+    # Load the on-edge prediction csv
+    pred_csv = pd.read_csv(os.path.join(args.input_dir, "chunks_with_predictions.csv"))
+
+    merged = pd.merge(
+        pred_csv, pd.DataFrame(results), left_on="chunk_file", right_on="name"
+    )
+
+    merged = merged[
+        [
+            "chunk_file",
+            "score",
+            "__pred_source",
+            "name",
+            "keras_prob",
+            "tflite_prob",
+            "birdnet",
+        ]
+    ]
+    merged.to_csv("single_dir_output.csv", index=False)
 
 
 if __name__ == "__main__":

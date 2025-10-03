@@ -10,7 +10,7 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
 
-from callbacks import DelayedReduceLROnPlateau, LRTensorBoard
+from callbacks import LRTensorBoard
 from dataset_loaders import (
     get_birdclef_datasets,
     get_birdset_dataset,
@@ -21,9 +21,10 @@ from misc import load_config
 from models.binary_cnn import build_binary_cnn
 from models.dual_class_cnn import build_dual_class_cnn
 
-# from models.miniresnet import build_miniresnet
-from models.miniresnet_logits import build_miniresnet
-from models.tinychirp import build_cnn_mel
+from models.miniresnet import build_miniresnet
+
+# from models.miniresnet_logits import build_miniresnet
+# from models.tinychirp import build_cnn_mel
 
 if __name__ == "__main__":
     logging.getLogger().setLevel(logging.INFO)
@@ -69,16 +70,6 @@ if __name__ == "__main__":
         #         1,
         #     )
         # )
-        model = build_miniresnet(
-            input_shape=(
-                config["data"]["audio"]["n_mels"],
-                config["data"]["audio"]["n_frames"],
-                1,
-            ),
-            n_classes=1,
-            loss=config["ml"]["loss"],
-            logits=True,
-        )
         # model = build_miniresnet(
         #     input_shape=(
         #         config["data"]["audio"]["n_mels"],
@@ -87,7 +78,17 @@ if __name__ == "__main__":
         #     ),
         #     n_classes=1,
         #     loss=config["ml"]["loss"],
+        #     logits=True,
         # )
+        model = build_miniresnet(
+            input_shape=(
+                config["data"]["audio"]["n_mels"],
+                config["data"]["audio"]["n_frames"],
+                1,
+            ),
+            n_classes=1,
+            loss=config["ml"]["loss"],
+        )
 
     # model = build_cnn_mel(
     #     input_shape=(
@@ -122,18 +123,6 @@ if __name__ == "__main__":
         save_best_only=True,
         verbose=1,
     )
-
-    # rlrop = DelayedReduceLROnPlateau(
-    #     monitor="val_recall_at_p90",
-    #     mode="max",
-    #     factor=0.5,
-    #     patience=5,
-    #     min_delta=0.001,
-    #     cooldown=0,
-    #     min_lr=1e-6,
-    #     verbose=1,
-    #     start_epoch=10,
-    # )
 
     rlrop = ReduceLROnPlateau(
         monitor="val_recall_at_p90",

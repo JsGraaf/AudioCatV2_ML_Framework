@@ -231,7 +231,7 @@ def get_scores_per_class_one_hot(df: pd.DataFrame, min_precision: float = 0.3):
     return best_scores
 
 
-def get_scores_per_class(df: pd.DataFrame, min_precision: float = 0.3):
+def get_scores_per_class(df: pd.DataFrame, min_precision: float = 0.9):
     best_scores = {}
 
     # Prepare score array

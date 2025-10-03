@@ -33,9 +33,14 @@ def build_miniresnet_hyper(hp):
 
     lr = hp.Choice("lr", values=[1e-2, 1e-3, 1e-4])
     dropout = hp.Float("dropout", min_value=0, max_value=0.5, step=0.05)
-    gamma = hp.Int("gamma", min_value=1, max_value=4, step=1)
-    alpha = hp.Float("alpha", min_value=0.1, max_value=0.5, step=0.05)
+
     loss = hp.Choice("loss", ["BCE", "FOCAL"])
+    if loss == "BCE":
+        gamma = hp.Int("gamma", min_value=1, max_value=4, step=1)
+        alpha = hp.Float("alpha", min_value=0.1, max_value=0.5, step=0.05)
+    else:
+        gamma = 1.0
+        alpha = 0.45
 
     assert n_stacks in (1, 2, 3), "n_stacks must be 1, 2, or 3"
     if pooling == "None":

@@ -15,7 +15,7 @@ data:
   soundscape_path: "datasets/birdclef_2021/soundscape_metadata_birdnet.csv"
   birdset_soundscape_path: "output/hsn_soundscapes.csv"
   min_per_class: 50
-  n_splits: 10
+  n_splits: 5
   pos_neg_ratio: 3
   audio:
     butterworth_order: 7

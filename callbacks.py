@@ -94,25 +94,6 @@ class BestF1OnVal(keras.callbacks.Callback):
         )
 
 
-class DelayedReduceLROnPlateau(tf.keras.callbacks.Callback):
-    def __init__(self, start_epoch=10, **rop_kwargs):
-        super().__init__()
-        self.start_epoch = start_epoch
-        self.rop = tf.keras.callbacks.ReduceLROnPlateau(**rop_kwargs)
-
-    # Pass model/params through
-    def set_model(self, model):
-        self.rop.set_model(model)
-
-    def set_params(self, params):
-        self.rop.set_params(params)
-
-    def on_epoch_end(self, epoch, logs=None):
-        # only start after warm-up period
-        if epoch + 1 >= self.start_epoch:
-            self.rop.on_epoch_end(epoch, logs)
-
-
 def get_lr_metric(optimizer):
     def lr(y_true, y_pred):
         return optimizer.lr

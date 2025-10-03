@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
 
-from cross_validation import make_cv_splits
+from cross_validation import make_cv_splits_with_validation
 from init import init
 from load_birdclef import load_and_clean_birdclef
 from metric_utils import get_scores_per_class, plot_pr_with_thresholds
@@ -51,7 +51,7 @@ if __name__ == "__main__":
 
     # Make the splits
     logging.info(f"Making the CV Splits")
-    cv_sets = make_cv_splits(
+    cv_sets = make_cv_splits_with_validation(
         birdclef_df,
         target=config["exp"]["target"],
         n_splits=config["data"]["n_splits"],
@@ -60,7 +60,7 @@ if __name__ == "__main__":
 
     # Create the TF datasets
     logging.info(f"Making TF datasets for each fold")
-    folds = build_file_lists(birdclef_df, cv_sets, config=config)
+    datasets = build_file_lists(birdclef_df, cv_sets, config=config)
 
     # Train the model
     scores = []
@@ -99,7 +99,7 @@ if __name__ == "__main__":
 
         # Callbacks
         early = EarlyStopping(
-            monitor="recall_at_p90",
+            monitor="val_recall_at_p90",
             mode="max",
             patience=8,
             min_delta=1e-3,
@@ -109,14 +109,14 @@ if __name__ == "__main__":
         )
         ckpt = ModelCheckpoint(
             "output/best_train_all.keras",
-            monitor="recall_at_p90",
+            monitor="val_recall_at_p90",
             mode="max",
             save_best_only=True,
             verbose=1,
         )
 
         lr = ReduceLROnPlateau(
-            monitor="recall_at_p90",
+            monitor="val_recall_at_p90",
             mode="max",
             factor=0.5,
             patience=5,
@@ -133,8 +133,9 @@ if __name__ == "__main__":
             steps_per_epoch=int(
                 np.ceil(fold["train_size"] / config["ml"]["batch_size"])
             ),
+            validation_data=fold["val_ds"],
             verbose=1,
-            callbacks=[early, ckpt, lr],
+            callbacks=[early, ckpt],
         )
 
         results = model.evaluate(fold["test_ds"], verbose=1, return_dict=True)
@@ -161,7 +162,5 @@ if __name__ == "__main__":
 
     # Write results to a csv
     pd.DataFrame(scores).to_csv("Training_Results.csv", index=False)
-
-    # Print the average metrics
 
     del datasets

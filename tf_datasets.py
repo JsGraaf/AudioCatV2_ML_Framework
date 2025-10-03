@@ -144,12 +144,12 @@ def build_train_dataset(
             seed=seed,
             reshuffle_each_iteration=True,
         )
-    # ds = ds.batch(batch_size).map(lambda x, y: mixup_batch_binary(x, y), num_parallel_calls=tf.data.AUTOTUNE).cache().repeat()
+
     ds = ds.batch(config["ml"]["batch_size"]).cache()
 
     # Conditional mixup
     mix_cfg = config["ml"].get("mixup", {})
-    if mix_cfg.get("enabled", False):
+    if mix_cfg.get("prob", 0.0) > 0.0:
         alpha = float(mix_cfg.get("alpha", 0.4))  # typical 0.2–0.4
         prob = float(mix_cfg.get("prob", 1.0))  # chance to apply per batch
 
@@ -282,14 +282,17 @@ def build_file_lists(
     for fold in folds:
         fold_id = int(fold["fold"])
         fold_train_idx = fold["train_idx"]
+        fold_val_idx = fold["val_idx"]
         fold_test_idx = fold["test_idx"]
 
         # Build the actual file lists
-
         pos_tr_all, neg_tr_all = build_file_list(
             df,
             fold_train_idx,
             config["exp"]["target"],
+        )
+        pos_val_all, neg_val_all = build_file_list(
+            df, fold_val_idx, config["exp"]["target"]
         )
         pos_test_all, neg_test_all = build_file_list(
             df, fold_test_idx, config["exp"]["target"]
@@ -304,6 +307,14 @@ def build_file_lists(
             config=config,
             seed=fold_id,
         )
+
+        val_ds, _ = make_fixed_test_dataset(
+            pos_val_all,
+            neg_val_all,
+            config=config,
+            seed=fold_id,
+        )
+
         test_ds, test_idx = make_fixed_test_dataset(
             pos_test_all,
             neg_test_all,
@@ -329,9 +340,11 @@ def build_file_lists(
             {
                 "fold_id": fold_id,
                 "train_ds": train_ds,
+                "val_ds": val_ds,
                 "test_ds": test_ds,
                 "test_df": pd.DataFrame(test_df),
                 "train_size": (1 + config["data"]["pos_neg_ratio"]) * len(pos_tr_all),
+                "val_size": (1 + config["data"]["pos_neg_ratio"]) * len(pos_val_all),
                 "test_size": (1 + config["data"]["pos_neg_ratio"]) * len(pos_test_all),
             }
         )
@@ -341,55 +354,68 @@ def build_file_lists(
     return out
 
 
-def build_final_dataset(df: pd.DataFrame, config: Dict):
+def build_final_dataset(df: pd.DataFrame, config: Dict, percentage: float = 1.0):
     """
     Create the final dataset, this contains all the training samples and
-    x times negative samples. A 80-10-10 train, val, test split will be made
+    x times negative samples. A 80-10-10 train, val, test split will be made.
+    If percentage < 1.0, only use a percentage of the entire dataset
     """
 
     # Build file lists for all files
     all_pos = (
         df[df["primary_label"] == config["exp"]["target"]]
-        .apply(lambda x: (x["path"], x["start"], x["end"]), axis=1)
+        .apply(
+            lambda x: ((x["path"], x["start"], x["end"]), x["primary_label"]), axis=1
+        )
         .tolist()
     )
 
     all_neg = (
         df[df["primary_label"] != config["exp"]["target"]]
-        .apply(lambda x: (x["path"], x["start"], x["end"]), axis=1)
+        .apply(
+            lambda x: ((x["path"], x["start"], x["end"]), x["primary_label"]), axis=1
+        )
         .tolist()
     )
 
-    all_pos = [(x, 1) for x in all_pos]
-    all_neg = [(x, 0) for x in all_neg]
+    # Take only a percentage of the data if requested
+    # Since we calculate the amount of negatives based on the positives,
+    # we only need to limit the positives
+    if percentage < 1.0:
+        n_pos = int(len(all_pos) * percentage)
+        random.seed(config["exp"]["random_state"])
+        all_pos = random.sample(all_pos, n_pos) if n_pos > 0 else []
 
     all_data = all_pos + all_neg
-
     all_idx = [x[0] for x in all_data]
     all_labels = [x[1] for x in all_data]
 
-    # Split into train and test
-    X_trainval, X_test, y_train, y_test = train_test_split(
+    # Split into train and test/val
+    X_train, X_testval, y_train, y_testval = train_test_split(
         all_idx,
         all_labels,
-        test_size=0.1,
+        test_size=0.2,
         random_state=config["exp"]["random_state"],
         stratify=all_labels,
     )
 
-    # Split train further into train and validation
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_trainval,
-        y_train,
-        test_size=0.1,
+    # Split testval into test and validation
+    X_val, X_test, y_val, y_test = train_test_split(
+        X_testval,
+        y_testval,
+        test_size=0.5,
         random_state=config["exp"]["random_state"],
-        stratify=y_train,
+        stratify=y_testval,
     )
 
     # Recreate the tuples
-    X_train = list(zip(X_train, y_train))
-    X_val = list(zip(X_val, y_val))
-    X_test = list(zip(X_test, y_test))
+    X_train = list(
+        zip(X_train, [1 if x == config["exp"]["target"] else 0 for x in y_train])
+    )
+    X_val = list(zip(X_val, [1 if x == config["exp"]["target"] else 0 for x in y_val]))
+    X_test = list(
+        zip(X_test, [1 if x == config["exp"]["target"] else 0 for x in y_test])
+    )
 
     pos_train = len([x for x in X_train if x[1] == 1])
     pos_val = len([x for x in X_val if x[1] == 1])
@@ -397,13 +423,13 @@ def build_final_dataset(df: pd.DataFrame, config: Dict):
 
     logging.info("Final training set")
     logging.info(
-        f"Train: {len(X_train)}, Pos: {pos_train}, Neg: {len([x for x in X_train if x[1] == 0])}"
+        f"Train: {len(X_train)}, Pos: {pos_train}, Neg: {len([x for x in X_train if x[1] == 0])}, Used: {(1 + config['data']['pos_neg_ratio']) * pos_train}"
     )
     logging.info(
-        f"Validation: {len(X_val)}, Pos: {pos_val}, Neg: {len([x for x in X_val if x[1] == 0])}"
+        f"Validation: {len(X_val)}, Pos: {pos_val}, Neg: {len([x for x in X_val if x[1] == 0])}, Used: {(1 + config['data']['pos_neg_ratio']) * pos_val}"
     )
     logging.info(
-        f"Testing: {len(X_test)}, Pos {pos_test}, Neg: {len([x for x in X_test if x[1] == 0])}"
+        f"Testing: {len(X_test)}, Pos {pos_test}, Neg: {len([x for x in X_test if x[1] == 0])}, Used: {(1 + config['data']['pos_neg_ratio']) * pos_test}"
     )
 
     train_ds = make_epoch_train_dataset(

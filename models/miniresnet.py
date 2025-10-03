@@ -19,6 +19,7 @@ def build_miniresnet(
     gamma=1.0,
     alpha=0.45,
     loss="BCE",
+    training_size=None,
 ):
     """
     MiniResNet (STM32-style) for 2D time–frequency inputs.
@@ -125,6 +126,18 @@ def build_miniresnet(
     )(x)
 
     model = Model(inputs=inputs, outputs=outputs, name=name)
+
+    # Cosine decay learning rate schedule
+    if training_size is not None:
+        steps_per_epoch = training_size // 32
+        lr_schedule = keras.optimizers.schedules.CosineDecay(
+            warmup_target=lr,
+            warmup_steps=steps_per_epoch * 10,
+            initial_learning_rate=lr,
+            decay_steps=steps_per_epoch * 90,
+            alpha=0.8,  # final lr = alpha * initial_lr
+        )
+        lr = lr_schedule
 
     model.compile(
         optimizer=keras.optimizers.Adam(learning_rate=lr),

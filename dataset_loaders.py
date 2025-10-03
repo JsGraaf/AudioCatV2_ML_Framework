@@ -57,7 +57,7 @@ def get_birdset_dataset(config):
     return datasets
 
 
-def get_custom_dataset(config):
+def get_custom_dataset(config, percentage: float = 1.0):
     # Load the dataset
     logging.info(f"Loading custom data from {config['data']['custom_data_path']}")
 
@@ -78,6 +78,6 @@ def get_custom_dataset(config):
 
     # Create a dataset containing all positives and pos_neg_ratio times negatives
     logging.info(f"Making the final dataset")
-    datasets = build_final_dataset(custom_df, config)
+    datasets = build_final_dataset(custom_df, config, percentage=percentage)
 
     return datasets

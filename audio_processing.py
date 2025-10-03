@@ -49,7 +49,7 @@ def generate_mel_spectrogram(
         window=window if isinstance(window, str) else window.decode("utf-8"),
         center=bool(center),
         pad_mode=pad_mode if isinstance(pad_mode, str) else pad_mode.decode("utf-8"),
-        power=float(power),
+        power=float(power) if use_pcen == False else 1.0,
         fmin=int(fmin),
         fmax=int(fmax),
         norm=(
