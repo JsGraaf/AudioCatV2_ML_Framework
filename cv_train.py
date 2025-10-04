@@ -3,7 +3,7 @@ import os
 
 import numpy as np
 import pandas as pd
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
+from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
 
 from cross_validation import make_cv_splits_with_validation
 from init import init
@@ -14,6 +14,7 @@ from models.binary_cnn import build_binary_cnn
 from models.tinychirp import build_cnn_mel
 from tf_datasets import build_file_lists
 from models.miniresnet import build_miniresnet
+from callbacks import DelayedReduceLROnPlateau
 
 if __name__ == "__main__":
     # Load the config
@@ -101,7 +102,7 @@ if __name__ == "__main__":
         early = EarlyStopping(
             monitor="val_recall_at_p90",
             mode="max",
-            patience=8,
+            patience=14,
             min_delta=1e-3,
             restore_best_weights=True,
             verbose=1,
@@ -119,12 +120,11 @@ if __name__ == "__main__":
             monitor="val_recall_at_p90",
             mode="max",
             factor=0.5,
-            patience=5,
+            patience=8,
             min_delta=0.001,
             cooldown=0,
             min_lr=1e-6,
             verbose=1,
-            start_from_epoch=10,
         )
 
         model.fit(
@@ -143,6 +143,7 @@ if __name__ == "__main__":
 
         predictions = model.predict(fold["test_ds"], verbose=1).ravel()
 
+        results["predictions"] = predictions
         fold["test_df"]["predictions"] = predictions
 
         prediction_df = pd.concat([prediction_df, fold["test_df"]])

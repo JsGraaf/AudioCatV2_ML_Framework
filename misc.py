@@ -34,7 +34,7 @@ def hp_audio_and_aug(hp: kt.HyperParameters):
     cfg["data"]["audio"]["n_mels"] = hp.Choice("n_mels", [64, 80, 96, 128], default=128)
 
     # STFT params
-    cfg["data"]["audio"]["n_fft"] = hp.Choice("n_fft", [256, 512, 1024], default=1024)
+    cfg["data"]["audio"]["n_fft"] = hp.Choice("n_fft", [512, 1024], default=1024)
     nfft = cfg["data"]["audio"]["n_fft"]
 
     # Hop depends on n_fft (keep reasonable geometries)
@@ -75,11 +75,11 @@ def hp_audio_and_aug(hp: kt.HyperParameters):
             "band_high_freq",
             min_value=7499,
             max_value=(sr // 2) - 1,
-            step=500,
+            step=1000,
             default=7499,
         )
 
-        band_high_freq = min((sr // 2) - 1, band_high_freq)
+        band_high_freq = min(fmax, band_high_freq)
 
         cfg["data"]["augments"]["band_high_freq"] = band_high_freq
 
@@ -121,12 +121,12 @@ def hp_audio_and_aug(hp: kt.HyperParameters):
         )
 
     # Mixup
-    cfg["ml"]["mixup"]["alpha"] = hp.Float(
-        "mixup_alpha", min_value=0.2, max_value=0.6, step=0.1, default=0.4
-    )
-    cfg["ml"]["mixup"]["prob"] = hp.Float(
-        "mixup_prob", min_value=0.0, max_value=1.0, step=0.2
-    )
+    p_mixup = hp.Float("mixup_prob", min_value=0.0, max_value=1.0, step=0.2)
+    cfg["ml"]["mixup"]["prob"] = p_mixup
+    if p_mixup > 0.0:
+        cfg["ml"]["mixup"]["alpha"] = hp.Float(
+            "mixup_alpha", min_value=0.2, max_value=0.6, step=0.1, default=0.4
+        )
 
     # ----- Sampling / batching -----
     cfg["ml"]["batch_size"] = hp.Choice("batch_size", [16, 32, 64], default=32)

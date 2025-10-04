@@ -1,7 +1,7 @@
+from tensorflow import keras
 import numpy as np
 import tensorflow as tf
 from sklearn import metrics
-from tensorflow import keras
 
 
 class BestF1OnVal(keras.callbacks.Callback):
@@ -101,7 +101,7 @@ def get_lr_metric(optimizer):
     return lr
 
 
-class LRTensorBoard(tf.keras.callbacks.Callback):
+class LRTensorBoard(keras.callbacks.Callback):
     def on_epoch_end(self, epoch, logs=None):
         lr = self.model.optimizer.lr
         print(lr)
@@ -130,7 +130,7 @@ class RecallAtP90(keras.metrics.Metric):
         self.num_thresholds = int(num_thresholds)
 
         # Use TF's built-in streaming metric under the hood
-        self._inner = tf.keras.metrics.RecallAtPrecision(
+        self._inner = keras.metrics.RecallAtPrecision(
             precision=self.precision, num_thresholds=self.num_thresholds
         )
 
@@ -152,3 +152,65 @@ class RecallAtP90(keras.metrics.Metric):
 
     def reset_state(self):
         self._inner.reset_state()
+
+        import tensorflow as tf
+
+
+class DelayedReduceLROnPlateau(keras.callbacks.Callback):
+    """
+    Gate a built-in ReduceLROnPlateau so it only starts after `start_epoch`.
+
+    Parameters mirror Keras' ReduceLROnPlateau, plus:
+      start_epoch: int, epochs to skip before enabling plateau checks.
+    """
+
+    def __init__(
+        self,
+        monitor="val_loss",
+        factor=0.5,
+        patience=5,
+        verbose=1,
+        mode="auto",
+        min_delta=1e-4,
+        cooldown=0,
+        min_lr=0.0,
+        start_epoch=5,
+    ):
+        super().__init__()
+        self.start_epoch = int(start_epoch)
+        self._inner = keras.callbacks.ReduceLROnPlateau(
+            monitor=monitor,
+            factor=factor,
+            patience=patience,
+            verbose=verbose,
+            mode=mode,
+            min_delta=min_delta,
+            cooldown=cooldown,
+            min_lr=min_lr,
+        )
+
+    # Pass-through plumbing so the inner callback is fully initialized
+    def set_model(self, model):
+        super().set_model(model)
+        self._inner.set_model(model)
+
+    def set_params(self, params):
+        super().set_params(params)
+        self._inner.set_params(params)
+
+    def on_train_begin(self, logs=None):
+        self._inner.on_train_begin(logs)
+
+    def on_epoch_end(self, epoch, logs=None):
+        # Delay until start_epoch
+        if (epoch + 1) < self.start_epoch:
+            if self._inner.verbose:
+                print(
+                    f"[DelayedRLoP] Skipping plateau check (epoch {epoch+1}/{self.start_epoch-1})"
+                )
+            return
+        # After the delay, delegate to the inner scheduler
+        self._inner.on_epoch_end(epoch, logs)
+
+    def on_train_end(self, logs=None):
+        self._inner.on_train_end(logs)

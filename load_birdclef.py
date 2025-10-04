@@ -78,7 +78,7 @@ def expand_birdclef(df: pd.DataFrame) -> Optional[pd.DataFrame]:
 
 
 def load_and_clean_birdclef(
-    path: Path, min_per_class: int = 0, allow_cache=True
+    path: Path, min_per_class: int = 0, allow_cache=False
 ) -> Optional[pd.DataFrame]:
     """
     This function:
@@ -120,6 +120,54 @@ def load_and_clean_birdclef(
     # Output to cache
     os.makedirs("cache", exist_ok=True)
     expanded_df.to_csv("cache/cleaned_birdnet_clef.csv")
+
+    return expanded_df
+
+
+def load_and_clean_custom(
+    path: Path, min_per_class: int = 0, allow_cache=True
+) -> Optional[pd.DataFrame]:
+    """
+    This function:
+    - Loads the dataframe
+    - Maps the birdnet predictions to individual rows with primary labels
+    """
+
+    # First check if we have it cached
+    if allow_cache and os.path.isfile(Path("cache/cleaned_custom.csv")):
+        logging.info("Found cached custom dataframe!")
+        return pd.read_csv("cache/cleaned_custom.csv")
+
+    # We can reuse the birdcelf loader
+    custom_df = load_birdclef(path, min_per_class=min_per_class)
+
+    if custom_df is None:
+        return None
+
+    label_mapping = create_label_mapping(custom_df)
+
+    expanded_df = expand_birdclef(custom_df)
+
+    if expanded_df is None:
+        return None
+
+    # Add the primary labels to each row
+    expanded_df["primary_label"] = expanded_df.apply(
+        (
+            lambda row: (
+                label_mapping[row["scientific_name"]]
+                if row["scientific_name"] in label_mapping.keys()
+                else None
+            )
+        ),
+        axis=1,
+    )
+    # Drop the none columns
+    expanded_df = expanded_df.dropna(subset=["primary_label"])
+
+    # Output to cache
+    os.makedirs("cache", exist_ok=True)
+    expanded_df.to_csv("cache/cleaned_custom.csv")
 
     return expanded_df
 

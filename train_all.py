@@ -7,8 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
+from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
 
 from callbacks import LRTensorBoard
 from dataset_loaders import (
@@ -110,7 +109,7 @@ if __name__ == "__main__":
     early = EarlyStopping(
         monitor="val_recall_at_p90",
         mode="max",
-        patience=8,
+        patience=14,
         min_delta=1e-3,
         restore_best_weights=True,
         verbose=1,
@@ -128,12 +127,11 @@ if __name__ == "__main__":
         monitor="val_recall_at_p90",
         mode="max",
         factor=0.5,
-        patience=5,
+        patience=8,
         min_delta=0.001,
         cooldown=0,
         min_lr=1e-6,
         verbose=1,
-        start_from_epoch=10,
     )
 
     model.fit(

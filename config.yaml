@@ -1,8 +1,8 @@
 exp:
   name: "Testing"
   # target: "rocwre"
-  target: "Pica pica"
-  # target: "rucwar"
+  # target: "Pica pica"
+  target: "rucwar"
   # target: "bobfly1"
   random_state: 51
   one_hot: False
@@ -11,7 +11,7 @@ data:
   birdclef_path: "datasets/birdclef_2021/train_metadata_birdnet.csv"
   birdset_path: "output/hsn_events.csv"
   custom_data_path: "datasets/custom_set/train_metadata_birdnet.csv"
-  use_dataset: "custom" # "birdclef" | "birdset" | "custom"
+  use_dataset: "birdclef" # "birdclef" | "birdset" | "custom"
   soundscape_path: "datasets/birdclef_2021/soundscape_metadata_birdnet.csv"
   birdset_soundscape_path: "output/hsn_soundscapes.csv"
   min_per_class: 50

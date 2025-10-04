@@ -4,7 +4,7 @@ import sys
 
 import pandas as pd
 
-from load_birdclef import load_and_clean_birdclef
+from load_birdclef import load_and_clean_birdclef, load_and_clean_custom
 from tf_datasets import build_final_dataset
 
 
@@ -61,7 +61,7 @@ def get_custom_dataset(config, percentage: float = 1.0):
     # Load the dataset
     logging.info(f"Loading custom data from {config['data']['custom_data_path']}")
 
-    custom_df = load_and_clean_birdclef(
+    custom_df = load_and_clean_custom(
         config["data"]["custom_data_path"],
         config["data"]["min_per_class"],
     )

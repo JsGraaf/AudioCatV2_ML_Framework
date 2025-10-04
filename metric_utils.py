@@ -243,7 +243,7 @@ def get_scores_per_class(df: pd.DataFrame, min_precision: float = 0.9):
             "f1": {"t": 0, "val": -1},
             "p90": {"t": 0, "val": -1},
         }
-    print(best_scores.keys())
+
     for t in np.arange(0.01, 1.0, 0.01):
         df["predicted_label"] = df["predictions"].apply(lambda x: 1 if x >= t else 0)
 
