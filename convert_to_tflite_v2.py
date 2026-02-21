@@ -11,12 +11,13 @@ from dataset_loaders import (
 )
 from init import init
 from misc import load_config
+from metric_utils import confusion_at_threshold
 from models.binary_cnn import build_binary_cnn
 from models.dual_class_cnn import build_dual_class_cnn
 
-# from models.miniresnet import build_miniresnet
-from models.miniresnet_logits import build_miniresnet
+from models.miniresnet import build_miniresnet
 from models.tinychirp import build_cnn_mel
+import os
 
 
 def _sigmoid(x):
@@ -30,14 +31,12 @@ def _tflite_get_io(interpreter):
 
 
 def _tflite_quantize(x_f32, scale, zp, dtype):
-    # x_q = round(x/scale + zp)
     q = np.round(x_f32 / scale + zp)
     q = np.clip(q, np.iinfo(dtype).min, np.iinfo(dtype).max)
     return q.astype(dtype)
 
 
 def _tflite_dequantize(y_int, scale, zp):
-    # y_f = scale * (y_int - zp)
     return scale * (y_int.astype(np.float32) - zp)
 
 
@@ -47,7 +46,6 @@ def _fix_to_expected_hw(x3, expected_hw_c):
     h, w = x3.shape[0], x3.shape[1]
     c = x3.shape[2] if x3.shape.rank == 3 else None
 
-    # Add channel dim if missing
     if x3.shape.rank == 2:
         x3 = tf.expand_dims(x3, -1)  # (H,W,1)
         h, w, c = x3.shape
@@ -67,16 +65,13 @@ def _fix_to_expected_hw(x3, expected_hw_c):
         x3 = tf.transpose(x3, [1, 0, 2])
         h, w, c = x3.shape
 
-    # Final sanity: enforce expected channel dim
     if c is None or c != exp_C:
         if c == 1 and exp_C == 1:
-            pass  # OK
+            pass
         else:
-            # force to single channel if needed
             x3 = x3[..., :1]
             c = 1
 
-    # Now ensure H,W match exactly (no resizing here—better to fix dataset)
     if h != exp_H or w != exp_W:
         raise ValueError(
             f"Rep sample has shape (H,W,C)=({h},{w},{c}), expected ({exp_H},{exp_W},{exp_C})."
@@ -85,15 +80,14 @@ def _fix_to_expected_hw(x3, expected_hw_c):
     return x3
 
 
-def rep_ds_gen_from_tfdata(ds, model, max_samples=100):
+def rep_ds_gen_from_tfdata(ds, model, max_samples=-1):
     """
-    Yields [input] where input has shape (1, H, W, C) and dtype float32,
-    matching model.input_shape = (None, H, W, C).
+    Representative dataset generator for TFLite calibration.
+    Yields [input] with shape (1,H,W,C) float32.
     """
     _, exp_H, exp_W, exp_C = model.input_shape  # e.g. (None,80,241,1)
     n = 0
     for elem in ds:
-        # peel (x,y) or dict
         if isinstance(elem, (tuple, list)):
             x = elem[0]
         elif isinstance(elem, dict):
@@ -107,20 +101,19 @@ def rep_ds_gen_from_tfdata(ds, model, max_samples=100):
         if x.shape.rank >= 4 and x.shape[0] is not None and x.shape[0] > 1:
             bs = int(x.shape[0])
             for i in range(bs):
-                xi = tf.cast(x[i], tf.float32)  # rank-3 or rank-2
-                if xi.shape.rank == 2:  # (H,W) -> (H,W,1)
+                xi = tf.cast(x[i], tf.float32)
+                if xi.shape.rank == 2:
                     xi = tf.expand_dims(xi, -1)
                 xi = _fix_to_expected_hw(xi, (exp_H, exp_W, exp_C))
-                xi = tf.expand_dims(xi, 0)  # add batch -> (1,H,W,C)
+                xi = tf.expand_dims(xi, 0)
                 yield [xi]
                 n += 1
-                if n >= max_samples:
+                if max_samples > 0 and n >= max_samples:
                     return
         else:
             # Unbatched or bs==1
-            if x.shape.rank == 4:  # (1,H,W,C) or (B,H,W,C with B==1)
+            if x.shape.rank == 4:
                 xi = tf.cast(x[:1], tf.float32)
-                # verify
                 if xi.shape[1:] != (exp_H, exp_W, exp_C):
                     xi_fixed = _fix_to_expected_hw(
                         tf.squeeze(xi, 0), (exp_H, exp_W, exp_C)
@@ -129,18 +122,18 @@ def rep_ds_gen_from_tfdata(ds, model, max_samples=100):
             else:
                 xi = tf.cast(x, tf.float32)
                 if xi.shape.rank == 2:
-                    xi = tf.expand_dims(xi, -1)  # (H,W,1)
+                    xi = tf.expand_dims(xi, -1)
                 xi = _fix_to_expected_hw(xi, (exp_H, exp_W, exp_C))
                 xi = tf.expand_dims(xi, 0)
             yield [xi]
             n += 1
-            if n >= max_samples:
+            if max_samples > 0 and n >= max_samples:
                 return
 
 
 def dataset_as_single_samples(ds, model):
     """
-    Yields (x_np, y_scalar) where x_np has shape (1,H,W,1) float32
+    Yields (x_np, y_scalar) with x_np shape (1,H,W,1) float32,
     matching model.input_shape = (None,H,W,1).
     """
     _, exp_H, exp_W, exp_C = model.input_shape
@@ -148,48 +141,37 @@ def dataset_as_single_samples(ds, model):
         if isinstance(elem, (tuple, list)):
             x, y = elem[0], elem[1]
         elif isinstance(elem, dict):
-            # pick first tensor as x, second as y (adjust if your dict is different)
             keys = list(elem.keys())
             x, y = elem[keys[0]], elem[keys[1]]
         else:
             raise ValueError("val_ds must yield (x,y) or dict with features+label")
 
         x = tf.convert_to_tensor(x)
-        # If batched, take first item (we assume ds is batched(1) already)
         if x.shape.rank == 4:
-            x = x[0]  # (H,W,C) or (C,H,W)
+            x = x[0]
         x = tf.cast(x, tf.float32)
         x = _fix_to_expected_hw(x, (exp_H, exp_W, exp_C))
-        x = tf.expand_dims(x, 0)  # (1,H,W,C)
+        x = tf.expand_dims(x, 0)
 
-        # squeeze y to scalar float
         y_scalar = float(tf.reshape(tf.cast(y, tf.float32), [-1])[0].numpy())
         yield x.numpy(), y_scalar
 
 
-def eval_keras_binary(model, val_ds, threshold=0.5):
-    """Return accuracy and confusion counts for Keras model on val_ds."""
+# --------- NEW: Collect predictions once, then scan thresholds efficiently ---------
+
+
+def collect_probs_keras(model, val_ds):
+    """Return arrays y_true, y_prob from a single pass."""
     y_true, y_prob = [], []
     for x, y in dataset_as_single_samples(val_ds, model):
         p = model.predict(x, verbose=0)  # (1,1)
         y_true.append(y)
         y_prob.append(float(np.squeeze(p)))
-    y_true = np.asarray(y_true, dtype=np.float32)
-    y_prob = np.asarray(y_prob, dtype=np.float32)
-    y_pred = (y_prob >= threshold).astype(np.float32)
-    acc = float(np.mean((y_pred == y_true)))
-    tp = int(np.sum((y_pred == 1) & (y_true == 1)))
-    tn = int(np.sum((y_pred == 0) & (y_true == 0)))
-    fp = int(np.sum((y_pred == 1) & (y_true == 0)))
-    fn = int(np.sum((y_pred == 0) & (y_true == 1)))
-    return acc, dict(tp=tp, tn=tn, fp=fp, fn=fn), y_prob
+    return np.asarray(y_true, dtype=np.float32), np.asarray(y_prob, dtype=np.float32)
 
 
-def eval_tflite_binary(interpreter, val_ds, model, threshold=0.5):
-    """
-    Run TFLite on val_ds, return accuracy and confusion counts.
-    Handles float or int8 I/O, and applies sigmoid if output is a logit.
-    """
+def collect_probs_tflite(interpreter, val_ds, model):
+    """Return arrays y_true, y_prob from a single pass of the TFLite model."""
     in_det, out_det = _tflite_get_io(interpreter)
     in_index = in_det["index"]
     out_index = out_det["index"]
@@ -199,7 +181,6 @@ def eval_tflite_binary(interpreter, val_ds, model, threshold=0.5):
     in_scale, in_zp = in_det.get("quantization", (0.0, 0))
     out_scale, out_zp = out_det.get("quantization", (0.0, 0))
 
-    # Detect if graph already has sigmoid/logistic
     try:
         has_logistic = any(
             "LOGISTIC" in (d.get("op_name") or "")
@@ -210,19 +191,13 @@ def eval_tflite_binary(interpreter, val_ds, model, threshold=0.5):
 
     y_true, y_prob = [], []
 
-    fixed_shape = tuple(in_det["shape"])
-    expect_batch1 = len(fixed_shape) > 0 and fixed_shape[0] == 1
-
-    # IMPORTANT: iterator already yields (1,H,W,C)
     for x_np, y_scalar in dataset_as_single_samples(val_ds, model):
-        xin = x_np  # already batched: (1,H,W,C)
+        xin = x_np  # (1,H,W,C)
 
-        # If shapes differ, try to resize once (dynamic shape). Else, trim to batch=1.
-        if xin.shape != tuple(in_det["shape"]):
+        if tuple(xin.shape) != tuple(in_det["shape"]):
             try:
                 interpreter.resize_tensor_input(in_index, xin.shape, strict=False)
                 interpreter.allocate_tensors()
-                # refresh details after resize
                 in_det, out_det = _tflite_get_io(interpreter)
                 in_index = in_det["index"]
                 out_index = out_det["index"]
@@ -231,10 +206,9 @@ def eval_tflite_binary(interpreter, val_ds, model, threshold=0.5):
                 in_scale, in_zp = in_det.get("quantization", (0.0, 0))
                 out_scale, out_zp = out_det.get("quantization", (0.0, 0))
             except Exception:
-                if xin.shape[0] != 1 and expect_batch1:
+                if xin.shape[0] != 1:
                     xin = xin[:1, ...]
 
-        # Quantize if needed
         if in_is_float:
             x_feed = xin.astype(np.float32)
         else:
@@ -244,16 +218,14 @@ def eval_tflite_binary(interpreter, val_ds, model, threshold=0.5):
 
         interpreter.set_tensor(in_index, x_feed)
         interpreter.invoke()
-        y_raw = interpreter.get_tensor(out_index)  # e.g. (1,1) or (1,)
+        y_raw = interpreter.get_tensor(out_index)
 
-        # Dequantize / to float
         if out_is_float:
             y_f = y_raw.astype(np.float32)
         else:
             if out_scale and out_scale > 0:
                 y_f = _tflite_dequantize(y_raw, out_scale, out_zp)
             else:
-                # Treat as logits in int domain (rare)
                 y_f = y_raw.astype(np.float32)
 
         y_val = float(np.squeeze(y_f))
@@ -262,41 +234,84 @@ def eval_tflite_binary(interpreter, val_ds, model, threshold=0.5):
         y_true.append(float(y_scalar))
         y_prob.append(y_p)
 
-    y_true = np.asarray(y_true, dtype=np.float32)
-    y_prob = np.asarray(y_prob, dtype=np.float32)
-    y_pred = (y_prob >= threshold).astype(np.float32)
+    return np.asarray(y_true, dtype=np.float32), np.asarray(y_prob, dtype=np.float32)
 
-    acc = float(np.mean((y_pred == y_true)))
-    tp = int(np.sum((y_pred == 1) & (y_true == 1)))
-    tn = int(np.sum((y_pred == 0) & (y_true == 0)))
-    fp = int(np.sum((y_pred == 1) & (y_true == 0)))
-    fn = int(np.sum((y_pred == 0) & (y_true == 1)))
 
-    return acc, dict(tp=tp, tn=tn, fp=fp, fn=fn), y_prob
+def best_thresh_at_precision(y_true, y_prob, min_precision=0.9):
+    """
+    Efficiently scan thresholds to maximize recall with precision >= min_precision.
+    If multiple thresholds have the same recall, prefer higher precision.
+
+    Returns:
+      t_best, recall_best, precision_best
+    """
+    y_true = y_true.astype(np.int32)
+    pos_total = int(np.sum(y_true))
+    if pos_total == 0:
+        return 0.5, 0.0, 0.0  # degenerate
+
+    # Sort by predicted probability desc
+    order = np.argsort(-y_prob)
+    y_prob_sorted = y_prob[order]
+    y_true_sorted = y_true[order]
+
+    # Cumulative TP as we lower threshold from +inf to -inf
+    tp_cum = np.cumsum(y_true_sorted)  # tp at each cut
+    pred_cum = np.arange(1, len(y_true_sorted) + 1)  # total predicted positives
+    precision = tp_cum / np.maximum(pred_cum, 1)
+    recall = tp_cum / pos_total
+
+    # Candidate thresholds are the score at each position
+    thresh = y_prob_sorted
+
+    # Filter candidates meeting precision
+    ok = precision >= min_precision
+    if not np.any(ok):
+        # No threshold achieves desired precision
+        # pick the one with highest precision anyway (with largest recall tie-break)
+        i = int(np.argmax(precision))
+        return float(thresh[i]), float(recall[i]), float(precision[i])
+
+    # Among ok, choose max recall; if tie, max precision
+    idx_ok = np.where(ok)[0]
+    recalls_ok = recall[idx_ok]
+    best_recall = np.max(recalls_ok)
+    idx_best_recall = idx_ok[recalls_ok == best_recall]
+    # tie-break on precision
+    precisions_ties = precision[idx_best_recall]
+    i_rel = int(np.argmax(precisions_ties))
+    i_best = int(idx_best_recall[i_rel])
+
+    return float(thresh[i_best]), float(recall[i_best]), float(precision[i_best])
 
 
 if __name__ == "__main__":
     argparse = ArgumentParser()
-    argparse.add_argument("--input_model", required=True)
-    argparse.add_argument("--output_model", required=True)
+    argparse.add_argument("--input_dir", required=True)
     args = argparse.parse_args()
 
     logging.getLogger().setLevel(logging.INFO)
-    # Load the config
-    CONFIG_PATH = "config.yaml"
+    CONFIG_PATH = os.path.join(args.input_dir, "config.yaml")
     logging.info(f"Loading config from {CONFIG_PATH}")
     config = load_config(CONFIG_PATH)
-
     if config is None:
         exit(1)
+
+    # Ensure output dir
+    output_dir_path = os.path.join(args.input_dir, "tflite_model")
+    os.makedirs(output_dir_path, exist_ok=True)
+    output_model_name = os.path.join(
+        output_dir_path, str(os.path.basename(args.input_dir)).lower() + ".tflite"
+    )
 
     logging.info(
         f"Running Experiment {config['exp']['name']} for {config['exp']['target']}"
     )
 
-    # Initialize the framework
+    # Initialize
     init(config["exp"]["random_state"])
 
+    # Load dataset
     if config["data"]["use_dataset"] == "birdset":
         logging.info("[Info] Loading birdset!")
         datasets = get_birdset_dataset(config)
@@ -307,15 +322,15 @@ if __name__ == "__main__":
         logging.info("[Info] Loading custom Dataset")
         datasets = get_custom_dataset(config)
 
-    # Prepare testing dataset
+    # Prepare representative ds (features only)
     ds = (
-        datasets["test_ds"]
+        datasets["val_ds"]
         .map(lambda x, _: x, num_parallel_calls=tf.data.AUTOTUNE)
         .unbatch()
         .batch(1)
     )
 
-    # Load the model
+    # Build & load Keras model
     model = build_miniresnet(
         input_shape=(
             config["data"]["audio"]["n_mels"],
@@ -324,28 +339,26 @@ if __name__ == "__main__":
         ),
         n_classes=1,
         loss=config["ml"]["loss"],
-        logits=False,
+        n_stacks=config["ml"]["stacks"],
+        gamma=config["ml"]["gamma"],
+        alpha=config["ml"]["alpha"],
     )
+    model.load_weights(os.path.join(args.input_dir, "full_training_model.keras"))
 
-    model.load_weights(args.input_model)
-
-    # Load the model
+    # Convert to INT8 TFLite
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
     converter.representative_dataset = lambda: rep_ds_gen_from_tfdata(ds, model)
     converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
-    # converter.inference_input_type = tf.int8
-    # converter.inference_output_type = tf.int8
     tflite_model = converter.convert()
 
-    # Output the model
-    with open(args.output_model, "wb") as f:
+    with open(output_model_name, "wb") as f:
         f.write(tflite_model)
 
     interpreter = tf.lite.Interpreter(model_content=tflite_model)
     interpreter.allocate_tensors()
 
-    # Inputs / outputs
+    # Inputs / outputs (debug)
     print("== Inputs ==")
     for d in interpreter.get_input_details():
         print(
@@ -370,22 +383,30 @@ if __name__ == "__main__":
             )
         )
 
-    # Ops present (unordered set)
-    ops = {
-        d.get("op_name", "?") for d in interpreter._get_ops_details()
-    }  # _get_ops_details is semi-private
+    ops = {d.get("op_name", "?") for d in interpreter._get_ops_details()}
     print("\n== Ops in graph ==")
     print(sorted(ops))
 
-    # ===== Run both evaluations on your val_ds =====
-    val_ds = (
-        datasets["val_ds"].unbatch().batch(1).shuffle(1000).take(1000)
-    )  # (x,y) pairs
+    # ===== Evaluate once each, then optimize threshold =====
+    val_ds = datasets["test_ds"].unbatch().batch(1)
 
-    keras_acc, keras_cm, keras_probs = eval_keras_binary(model, val_ds, threshold=0.5)
-    print("\n[Keras]  acc=%.4f  cm=%s" % (keras_acc, keras_cm))
+    # Keras pass
+    y_true_k, y_prob_k = collect_probs_keras(model, val_ds)
+    t_k, r_k, p_k = best_thresh_at_precision(y_true_k, y_prob_k, min_precision=0.90)
+    cm_k = confusion_at_threshold(y_true_k, y_prob_k, t_k)
+    print(f"[Keras]  recall={r_k:.4f} precision={p_k:.4f}  cm={cm_k} t={t_k:.4f}")
 
-    tfl_acc, tfl_cm, tfl_probs = eval_tflite_binary(
-        interpreter, val_ds, model, threshold=0.5
-    )
-    print("[TFLite] acc=%.4f  cm=%s" % (tfl_acc, tfl_cm))
+    # TFLite pass
+    y_true_t, y_prob_t = collect_probs_tflite(interpreter, val_ds, model)
+    t_t, r_t, p_t = best_thresh_at_precision(y_true_t, y_prob_t, min_precision=0.90)
+    cm_t = confusion_at_threshold(y_true_t, y_prob_t, t_t)
+    print(f"[TFLite] recall={r_t:.4f} precision={p_t:.4f}  cm={cm_t} t={t_t:.4f}")
+
+    # Write both to metrics.txt (append in one go)
+    with open(os.path.join(output_dir_path, "metrics.txt"), "w") as f:
+        f.write(
+            f"[Keras]  recall={r_k:.4f} precision={p_k:.4f}  cm={cm_k} t={t_k:.4f}\n\n"
+        )
+        f.write(
+            f"[TFLite] recall={r_t:.4f} precision={p_t:.4f}  cm={cm_t} t={t_t:.4f}\n"
+        )

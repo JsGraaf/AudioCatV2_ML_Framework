@@ -83,6 +83,7 @@ def main():
             1,
         ),
         n_classes=1,
+        n_stacks=config["ml"]["stacks"],
     )
     model.load_weights(config["ml"]["model_path"])
 
@@ -124,9 +125,9 @@ def main():
             n_mels=n_mels,
             hop_length=hop_length,
             win_length=None,
-            window="hann",
+            window="hamming",
             center=True,
-            pad_mode="reflect",
+            pad_mode="constant",
             power=2.0,
             fmin=fmin,
             fmax=fmax,

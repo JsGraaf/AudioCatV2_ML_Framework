@@ -9,61 +9,144 @@ from sklearn.metrics import (
     precision_recall_fscore_support,
 )
 
+plt.rcParams.update({"font.size": 20})
 
-def plot_confusion_matrix(
-    y_true, y_pred, labels=None, class_names=None, normalize=True, cmap="Blues"
+
+def threshold_at_precision(y_true, y_score, target=0.90):
+    """Return the highest-recall threshold achieving >= target precision.
+    y_true: (N,) in {0,1}
+    y_score: (N,) sigmoid probabilities/logits passed through sigmoid.
+    """
+    precision, recall, thresholds = precision_recall_curve(y_true, y_score)
+    # precision/recall are length M, thresholds length M-1 (aligned to precision[1:])
+    precision = precision[1:]
+    recall = recall[1:]
+    ok = np.where(precision >= target)[0]
+    if ok.size == 0:
+        # No threshold reaches the target precision; fall back to best achievable precision
+        idx = np.argmax(precision)
+        return thresholds[idx], precision[idx], recall[idx], False
+    # among those, pick the one with max recall
+    idx = ok[np.argmax(recall[ok])]
+    return thresholds[idx], precision[idx], recall[idx], True
+
+
+def get_predictions(dataset, predictions):
+    y_true_batches = []
+    for _, yb in dataset:
+        y_true_batches.append(yb.numpy())
+    y_true = np.concatenate(y_true_batches, axis=0)
+
+    y_pred = predictions  # shape (N,)
+
+    df_pred = pd.DataFrame(
+        {
+            "y_true": y_true.squeeze(),
+            "y_pred": y_pred.squeeze(),  # keep the score for ROC/PR or threshold sweeping
+        }
+    )
+    return df_pred
+
+
+def confusion_at_threshold(y_true, y_prob, t):
+    y_pred = (y_prob >= t).astype(np.int32)
+    tp = int(np.sum((y_pred == 1) & (y_true == 1)))
+    tn = int(np.sum((y_pred == 0) & (y_true == 0)))
+    fp = int(np.sum((y_pred == 1) & (y_true == 0)))
+    fn = int(np.sum((y_pred == 0) & (y_true == 1)))
+    return dict(tp=tp, tn=tn, fp=fp, fn=fn)
+
+
+def plot_confusion_matrix_preprocessed(
+    cm,
+    labels,
+    class_names=None,
+    normalize=True,
+    cmap="Blues",
+    title="",
 ):
     """
     Plot a confusion matrix with fixed shape using all known labels.
+    The axes will be ordered as: target, other (x: left→right, y: bottom→top).
     """
-    if labels is None:
-        labels = np.unique(np.concatenate([y_true, y_pred]))
     if class_names is None:
         class_names = [str(l) for l in labels]
 
-    cm = confusion_matrix(y_true, y_pred, labels=labels)
+    plt.rcParams.update({"font.size": 22})
+
+    # Ensure labels and class_names are in the desired order: target, other
+    # Reverse both axes so that y-axis is bottom-to-top: target, other
+    # and x-axis is left-to-right: target, other
+    cm = np.asarray(cm)
+    if cm.ndim != 2 or cm.shape[0] != cm.shape[1]:
+        raise ValueError("`cm` must be a square 2D array.")
+    n = cm.shape[0]
+    if labels is None:
+        labels = list(range(n))
+
+    # Reverse the order for both axes (if needed)
+    # Here, we assume the desired order is [target, other], i.e., [1, 0]
+    # So, we reverse if the current order is [0, 1]
+    if class_names[0] != labels[0]:
+        cm = cm[::-1, ::-1]
+        class_names = class_names[::-1]
+        labels = labels[::-1]
 
     if normalize:
-        row_sums = cm.sum(axis=1, keepdims=True)
-        cm = cm.astype(np.float32) / np.where(row_sums == 0, 1, row_sums)
-        cm = np.nan_to_num(cm, nan=0.0)
+        row_sums = cm.sum(axis=0, keepdims=True)
+        cm_norm = cm.astype(np.float32) / np.where(row_sums == 0, 1, row_sums) * 100
+        cm_norm = np.nan_to_num(cm_norm, nan=0.0)
 
-    fig, ax = plt.subplots(figsize=(5, 5))
-    im = ax.imshow(cm, interpolation="nearest", cmap=cmap)
+    fig, ax = plt.subplots(figsize=(11, 9))
+    if normalize:
+        im = ax.imshow(cm_norm, cmap=cmap, vmin=0, vmax=100, aspect="auto")
+    else:
+        im = ax.imshow(cm, cmap=cmap, vmin=0, vmax=np.max(cm), aspect="auto")
 
-    cbar = ax.figure.colorbar(im, ax=ax)
+    cbar = fig.colorbar(im, ax=ax)
     cbar.ax.set_ylabel(
-        "Counts" if not normalize else "Proportion", rotation=-90, va="bottom"
+        "Counts" if not normalize else "Proportion(%)", rotation=-90, va="bottom"
     )
+    if normalize:
+        cbar.ax.set_ylim(0, 100)
+    else:
+        cbar.ax.set_ylim(0, 1)
 
     ax.set(
         xticks=np.arange(len(labels)),
         yticks=np.arange(len(labels)),
         xticklabels=class_names,
         yticklabels=class_names,
-        ylabel="True label",
-        xlabel="Predicted label",
+        ylabel="Predicted label",
+        xlabel="True label",
     )
     plt.setp(ax.get_xticklabels(), rotation=0)
 
-    fmt = ".2f" if normalize else "d"
     for i in range(cm.shape[0]):
         for j in range(cm.shape[1]):
             val = cm[i, j]
-            text_val = f"{val:.2f}" if normalize else f"{int(val)}"
+            if normalize:
+                val_norm = cm_norm[i, j]
+                text_val = f"{val_norm:.2f}% \n({val})"
+            else:
+                text_val = str(int(val))
 
             # Get background color from the colormap
-            rgba = plt.get_cmap(cmap)(val / cm.max() if cm.max() > 0 else 0)
+            if normalize:
+                rgba = plt.get_cmap(cmap)(
+                    val_norm / cm_norm.max() if cm_norm.max() > 0 else 0
+                )
+            else:
+                rgba = plt.get_cmap(cmap)(val / cm.max() if cm.max() > 0 else 0)
             r, g, b = rgba[:3]
-            # Perceptual luminance (sRGB)
             luminance = 0.299 * r + 0.587 * g + 0.114 * b
-
             text_color = "black" if luminance > 0.5 else "white"
 
             ax.text(j, i, text_val, ha="center", va="center", color=text_color)
 
     fig.tight_layout()
-    return ax
+    ax.set_title(title)
+    return fig, ax
 
 
 def plot_pr_with_thresholds(

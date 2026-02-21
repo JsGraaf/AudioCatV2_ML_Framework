@@ -80,7 +80,7 @@ if __name__ == "__main__":
         factor=3,
         seed=config["exp"]["random_state"],
         directory="my_dir",
-        project_name="miniresnet_final",
+        project_name="miniresnet_mixup",
     )
 
     tuner.search()

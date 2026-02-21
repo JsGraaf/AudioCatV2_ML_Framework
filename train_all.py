@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
+from sklearn.metrics import confusion_matrix, classification_report
 
 from callbacks import LRTensorBoard
 from dataset_loaders import (
@@ -21,6 +22,13 @@ from models.binary_cnn import build_binary_cnn
 from models.dual_class_cnn import build_dual_class_cnn
 
 from models.miniresnet import build_miniresnet
+
+from metric_utils import (
+    confusion_at_threshold,
+    threshold_at_precision,
+    get_predictions,
+    plot_confusion_matrix_preprocessed,
+)
 
 # from models.miniresnet_logits import build_miniresnet
 # from models.tinychirp import build_cnn_mel
@@ -87,6 +95,9 @@ if __name__ == "__main__":
             ),
             n_classes=1,
             loss=config["ml"]["loss"],
+            n_stacks=config["ml"]["stacks"],
+            gamma=config["ml"]["gamma"],
+            alpha=config["ml"]["alpha"],
         )
 
     # model = build_cnn_mel(
@@ -109,7 +120,7 @@ if __name__ == "__main__":
     early = EarlyStopping(
         monitor="val_recall_at_p90",
         mode="max",
-        patience=14,
+        patience=10,
         min_delta=1e-3,
         restore_best_weights=True,
         verbose=1,
@@ -127,7 +138,7 @@ if __name__ == "__main__":
         monitor="val_recall_at_p90",
         mode="max",
         factor=0.5,
-        patience=8,
+        patience=5,
         min_delta=0.001,
         cooldown=0,
         min_lr=1e-6,
@@ -157,3 +168,24 @@ if __name__ == "__main__":
     print(results)
 
     pd.DataFrame(results, index=[0]).to_csv("Full_Training_Results.csv", index=False)
+
+    # Calculate the confusion matrix
+    predictions = model.predict(datasets["test_ds"], verbose=1).ravel()
+
+    df_pred = get_predictions(datasets["test_ds"], predictions)
+
+    # Get the best threshold
+    threshold = threshold_at_precision(
+        y_true=df_pred["y_true"], y_score=df_pred["y_pred"], target=0.9
+    )[0]
+
+    cm = confusion_at_threshold(df_pred["y_true"], df_pred["y_pred"], threshold)
+
+    confusion_matrix = np.array([[cm["tp"], cm["fn"]], [cm["fp"], cm["tn"]]])
+    fig, _ = plot_confusion_matrix_preprocessed(
+        confusion_matrix,
+        labels=["Pica pica", "Other"],
+        title="Confusion Matrix for Pica pica",
+    )
+
+    fig.savefig("full_train.svg")

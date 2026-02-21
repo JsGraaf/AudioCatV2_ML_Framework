@@ -12,7 +12,26 @@ def load_config(path: Path = Path("config.yaml")) -> Optional[dict]:
     """
     with open(path, "r", encoding="utf-8") as f:
         try:
-            return yaml.safe_load(f)
+            cfg = yaml.safe_load(f)
+            # ----- Derived: number of frames for your fixed-length window -----
+            seconds = cfg["data"]["audio"]["seconds"]
+            if cfg["data"]["audio"]["center"]:
+                cfg["data"]["audio"]["n_frames"] = int(
+                    1
+                    + (seconds * cfg["data"]["audio"]["sample_rate"])
+                    // cfg["data"]["audio"]["hop_length"]
+                )
+            else:
+                cfg["data"]["audio"]["n_frames"] = int(
+                    1
+                    + (
+                        (seconds * cfg["data"]["audio"]["sr"])
+                        - cfg["data"]["audio"]["n_fft"]
+                    )
+                    // cfg["data"]["audio"]["hop_length"]
+                )
+            return cfg
+
         except yaml.YAMLError as exc:
             logging.error(f"Failed to load config: {exc}")
             return None
@@ -53,7 +72,7 @@ def hp_audio_and_aug(hp: kt.HyperParameters):
         "window", ["hann", "hamming"], default="hamming"
     )
 
-    fmin = hp.Int("fmin", min_value=0, max_value=1000, step=200)
+    fmin = hp.Int("fmin", min_value=20, max_value=1020, step=200)
     cfg["data"]["audio"]["fmin"] = fmin
 
     cfg["data"]["audio"]["band_low_freq"] = hp.Int(
@@ -68,7 +87,9 @@ def hp_audio_and_aug(hp: kt.HyperParameters):
 
     # Optional Butterworth bandpass (0 = disabled)
     cfg["data"]["audio"]["butterworth_order"] = hp.Choice(
-        "butterworth_order", [0, 2, 4, 6, 8], default=4
+        "butterworth_order",
+        [0, 2, 4, 6],
+        default=4,
     )
     if cfg["data"]["audio"]["butterworth_order"] > 0:
         band_high_freq = hp.Int(
@@ -100,12 +121,13 @@ def hp_audio_and_aug(hp: kt.HyperParameters):
     p_gaus = hp.Float("p_gaus", min_value=0.0, max_value=1.0, step=0.2, default=0.0)
     cfg["data"]["augments"]["p_gaus"] = p_gaus
     if p_gaus > 0.0:
-        cfg["data"]["augments"]["gaus_snr_min"] = hp.Int(
-            "gaus_snr_min", 0, 20, step=5, default=10
-        )
-        cfg["data"]["augments"]["gaus_snr_max"] = hp.Int(
-            "gaus_snr_max", 15, 35, step=5, default=20
-        )
+        gaus_snr_min = hp.Int("gaus_snr_min", 0, 20, step=5, default=10)
+        cfg["data"]["augments"]["gaus_snr_min"] = gaus_snr_min
+
+        gaus_snr_max = hp.Int("gaus_snr_max", 15, 35, step=5, default=20)
+
+        gaus_snr_max = max(gaus_snr_max, gaus_snr_min + 1)
+        cfg["data"]["augments"]["gaus_snr_max"] = gaus_snr_max
 
     # SpecAugment (masking only)
     p_spec = hp.Float("p_spec", min_value=0.0, max_value=1.0, step=0.2, default=0.5)
@@ -164,12 +186,5 @@ def hp_audio_and_aug(hp: kt.HyperParameters):
         cfg["data"]["audio"].setdefault("pcen_power", 0.50)
         cfg["data"]["audio"].setdefault("pcen_eps", 1e-6)
         cfg["data"]["audio"].setdefault("pcen_log1p", False)
-
-    # ----- Derived: number of frames for your fixed-length window -----
-    seconds = cfg["data"]["audio"]["seconds"]
-    if cfg["data"]["audio"]["center"]:
-        cfg["data"]["audio"]["n_frames"] = int(1 + (seconds * sr) // hop)
-    else:
-        cfg["data"]["audio"]["n_frames"] = int(1 + ((seconds * sr) - nfft) // hop)
 
     return cfg

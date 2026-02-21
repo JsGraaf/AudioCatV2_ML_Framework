@@ -1,0 +1,4 @@
+tflite_models/Pica_pica_1_stack/tflite_models/pica_pica.tflite
+Loading TFLite model...
+OUT quant: (0.0, 0)
+[ops] ['ADD', 'CONV_2D', 'DELEGATE', 'DEQUANTIZE', 'FULLY_CONNECTED', 'LOGISTIC', 'MAX_POOL_2D', 'MEAN']

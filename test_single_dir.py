@@ -66,6 +66,7 @@ def main():
     pcen_eps = float(audio_cfg.get("pcen_eps", 1e-6))
 
     # Build Keras model with LOGITS (no sigmoid in final layer)
+    print(config["ml"]["model_path"])
     model = build_miniresnet(
         input_shape=(
             config["data"]["audio"]["n_mels"],
@@ -73,6 +74,10 @@ def main():
             1,
         ),
         n_classes=1,
+        loss=config["ml"]["loss"],
+        n_stacks=config["ml"]["stacks"],
+        gamma=config["ml"]["gamma"],
+        alpha=config["ml"]["alpha"],
     )
     model.load_weights(config["ml"]["model_path"])
 
@@ -114,7 +119,12 @@ def main():
         chunks = []
         for f in glob.glob(path + "*.wav"):
             y, _ = librosa.load(f)
-            chunks.append((f.split("/")[-1], y))
+            if y.size:
+                peak = np.max(np.abs(y))
+                if peak > 0 and np.isfinite(peak):
+                    y = (y / peak).astype(np.float32, copy=False)
+
+            chunks.append((os.path.basename(f), y))
         return chunks
 
     # Chunks
@@ -195,17 +205,13 @@ def main():
         )
 
     # Load the on-edge prediction csv
-    pred_csv = pd.read_csv(os.path.join(args.input_dir, "chunks_with_predictions.csv"))
+    pred_csv = pd.read_csv(os.path.join(args.input_dir, "preds.csv"))
 
-    merged = pd.merge(
-        pred_csv, pd.DataFrame(results), left_on="chunk_file", right_on="name"
-    )
+    merged = pd.merge(pred_csv, pd.DataFrame(results), left_on="rec", right_on="name")
 
     merged = merged[
         [
-            "chunk_file",
             "score",
-            "__pred_source",
             "name",
             "keras_prob",
             "tflite_prob",

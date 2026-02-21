@@ -63,6 +63,62 @@ def mixup_map_fn(alpha: float, prob: float = 1.0):
     return _fn
 
 
+def _sample_beta_batch(alpha: float, b: tf.Tensor, dtype) -> tf.Tensor:
+    """[B] ~ Beta(alpha, alpha) without tfp."""
+    if alpha <= 0.0:
+        return tf.ones([b], dtype)
+    a = tf.cast(alpha, dtype)
+    g1 = tf.random.gamma(shape=[b], alpha=a, dtype=dtype)
+    g2 = tf.random.gamma(shape=[b], alpha=a, dtype=dtype)
+    return g1 / (g1 + g2 + 1e-8)  # [B]
+
+
+def _mixup_batch_per_sample(x: tf.Tensor, y: tf.Tensor, alpha: float):
+    """
+    Pairwise MixUp with a different lambda per example.
+    x: [B,H,W] or [B,H,W,C]
+    y: [B] or [B,K]
+    """
+    x = tf.convert_to_tensor(x)
+    y = tf.cast(y, tf.float32)
+    b = tf.shape(x)[0]
+
+    idx = tf.random.shuffle(tf.range(b))
+    x2 = tf.gather(x, idx, axis=0)
+    y2 = tf.gather(y, idx, axis=0)
+
+    lam = _sample_beta_batch(alpha, b, x.dtype)  # [B]
+    lam = tf.maximum(lam, 1.0 - lam)
+
+    # Broadcast lam across image dims
+    if x.shape.rank == 4:
+        lam_x = tf.reshape(lam, [b, 1, 1, 1])
+    else:  # [B,H,W]
+        lam_x = tf.reshape(lam, [b, 1, 1])
+
+    xm = lam_x * x + (1.0 - lam_x) * x2
+
+    if y.shape.rank == 1:
+        ym = lam * y + (1.0 - lam) * y2  # [B]
+    else:
+        ym = lam[:, None] * y + (1.0 - lam)[:, None] * y2  # [B,K]
+    return xm, ym
+
+
+def mixup_map_fn_per_sample(alpha: float, prob: float = 1.0):
+    """tf.data map-fn: per-sample lambda; apply with probability `prob` per batch."""
+
+    def _fn(x, y):
+        r = tf.random.uniform([])
+        return tf.cond(
+            r < prob,
+            lambda: _mixup_batch_per_sample(x, y, alpha),
+            lambda: (x, tf.cast(y, tf.float32)),
+        )
+
+    return _fn
+
+
 def plan_epoch_counts(n_pos_train: int, neg_pos_ratio: float = 2.0) -> Tuple[int, int]:
     pos_count = int(n_pos_train)
     neg_count = int(round(neg_pos_ratio * pos_count))
@@ -154,12 +210,14 @@ def build_train_dataset(
         prob = float(mix_cfg.get("prob", 1.0))  # chance to apply per batch
 
         if prob >= 1.0:
-            ds = ds.map(mixup_map_fn(alpha), num_parallel_calls=tf.data.AUTOTUNE)
+            ds = ds.map(
+                mixup_map_fn_per_sample(alpha), num_parallel_calls=tf.data.AUTOTUNE
+            )
         else:
             # Randomly apply with probability 'prob'
             def maybe_mix(x, y):
                 do = tf.less(tf.random.uniform([], 0, 1), prob)
-                xm, ym = _mixup_batch(x, y, alpha)
+                xm, ym = _mixup_batch_per_sample(x, y, alpha)
                 return tf.cond(do, lambda: (xm, ym), lambda: (x, y))
 
             ds = ds.map(maybe_mix, num_parallel_calls=tf.data.AUTOTUNE)

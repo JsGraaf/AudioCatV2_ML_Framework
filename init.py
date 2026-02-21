@@ -19,3 +19,5 @@ def init(random_state: int = 42):
     # Tensorflow uniform random generator
     TF_G1 = tf.random.Generator.from_seed(random_state)
     tf.random.set_global_generator(TF_G1)
+
+    tf.config.experimental.enable_op_determinism()

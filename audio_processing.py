@@ -76,7 +76,7 @@ def generate_mel_spectrogram(
 
         return spec_01.astype(np.float32)
 
-    # librosa.pcen expects POWER mel
+    # librosa.pcen expects Magnitude mel
     spec_pcen = librosa.pcen(
         spec,
         sr=int(sr),

@@ -1,0 +1,3 @@
+[Keras]  recall=0.9957 precision=0.9062  cm={'tp': 1401, 'tn': 4076, 'fp': 145, 'fn': 6} t=0.1980
+
+[TFLite] recall=0.9964 precision=0.9057  cm={'tp': 1402, 'tn': 4074, 'fp': 147, 'fn': 5} t=0.2500

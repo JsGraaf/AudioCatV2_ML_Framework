@@ -1,0 +1,72 @@
+exp:
+  name: "Testing"
+  # target: "rocwre"
+  target: "Pica pica"
+  # target: "rucwar"
+  # target: "bobfly1"
+  random_state: 51
+  one_hot: False
+
+data:
+  birdclef_path: "datasets/birdclef_2021/train_metadata_birdnet.csv"
+  birdset_path: "output/hsn_events.csv"
+  custom_data_path: "datasets/custom_set/train_metadata_birdnet.csv"
+  use_dataset: "custom" # "birdclef" | "birdset" | "custom"
+  soundscape_path: "datasets/birdclef_2021/soundscape_metadata_birdnet.csv"
+  birdset_soundscape_path: "output/hsn_soundscapes.csv"
+  min_per_class: 50
+  n_splits: 5
+  pos_neg_ratio: 3
+  audio:
+    butterworth_order: 7
+    sample_rate: 32000
+    n_frames: 241
+    n_mels: 80
+    n_fft: 1024
+    hop_length: 400
+    win_length: None
+    window: "hamming"
+    center: True
+    pad_mode: "constant"
+    power: 2.0
+    fmin: 500
+    fmax: 10000
+    norm: "slaney"
+    fill_type: "pad"
+    seconds: 3
+    use_pcen: True
+    pcen_time_constant: 0.400
+    pcen_gain: 0.98
+    pcen_bias: 2.0
+    pcen_power: 0.5
+    pcen_eps: 1e-6
+
+  augments:
+    band_low_freq: 500
+    band_high_freq: 10000
+
+    notch_width: 500
+
+    p_loud: 0.8
+    loud_range: [-23.0, -27.0]
+
+    p_gaus: 0.1
+    gaus_range: [16, 28]
+
+    p_spec: 0.0
+    spec_freq_masks: 2
+    spec_max_freq_width: 16
+    spec_time_masks: 2
+    spec_max_time_width: 32
+
+ml:
+  batch_size: 32
+  epochs_per_fold: 100
+  model_path: "output/full_training_model.keras"
+  tflite_model_path: "tflite_models/Pica_pica/tflite_models/full_training_model_int8.tflite"
+  loss: "FOCAL" # "FOCAL" | "BCE"
+  mixup:
+    enabled: true
+    alpha: 0.4
+    prob: 1.0
+  lr_scheduler: "cosine" # "RLOP" | "DRLOP" | "Cosine"
