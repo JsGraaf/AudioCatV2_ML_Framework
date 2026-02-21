@@ -1,0 +1,27 @@
+\begin{table}[ht]
+\centering
+\caption{Configuration of the audio preprocessing and model training parameters used in this experiment.}
+\label{tab:experiment_test_config}
+\begin{tabular}{l|l}
+\hline
+ Parameter           & Value           \\\hline
+\hline
+ Target Sample Rate  & 16000           \\\hline
+ Minimum Length      & 4 s             \\\hline
+ Maximum Length      & 10 s            \\\hline
+ Frame Length        & 1024            \\\hline
+ Hop Length          & 512             \\\hline
+ Number of Mel Bands & 64              \\\hline
+ Window Function     & hann            \\\hline
+ Overlap             & 0.5             \\\hline
+ FFT Size (n\_fft)    & 1024            \\\hline
+ Patch Length        & 96 frames       \\\hline
+ Normalization       & slaney          \\\hline
+ Input Shape         & (64, 96)        \\\hline
+ Batch Size          & 16              \\\hline
+ Epochs              & 100             \\\hline
+ Dropout             & 0               \\\hline
+ Optimizer           & Adam (lr=0.001) \\\hline
+\hline
+\end{tabular}
+\end{table}
